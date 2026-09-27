@@ -1,0 +1,6 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- 채집·보물 기록의 세계 지도 핀. 내용은 NodeMap.lua의 EzyWOWFNodePinMixin이 만든다. -->
+	<Frame name="EzyWOWFNodePinTemplate" mixin="EzyWOWFNodePinMixin" enableMouse="true" virtual="true">
+		<Size x="16" y="16"/>
+	</Frame>
+</Ui>

@@ -1,0 +1,22 @@
+<Bindings>
+	<Binding name="EZYWOWF_TOGGLE" header="EZYWOWF" category="ADDONS">
+		EzyWOWF_ToggleWindow()
+	</Binding>
+	<Binding name="CLICK EzyWOWFQuestItemButton:LeftButton" category="ADDONS"/>
+	<Binding name="EZYWOWF_QUESTITEM_NEXT" category="ADDONS">
+		EzyWOWF_QuestItemNext()
+	</Binding>
+	<Binding name="CLICK EzyWOWFTrackBEASTS:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackHUMANOIDS:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackUNDEAD:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackHIDDEN:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackELEMENTALS:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackDEMONS:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackGIANTS:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackDRAGONKIN:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackHERBS:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackMINERALS:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFTrackTREASURE:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFQuestMobButton:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFPetFeedButton:LeftButton" category="ADDONS"/>
+</Bindings>
