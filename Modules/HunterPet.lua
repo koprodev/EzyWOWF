@@ -1,19 +1,14 @@
--- 펫 도우미 (사냥꾼): 펫 없음/죽음/불만 · 탄약 부족 화면 알림, 스마트 펫 매크로, 스마트 먹이 키.
+-- 펫 도우미 (사냥꾼): 펫 없음/죽음/불만 · 탄약 부족 화면 알림, 스마트 펫 매크로.
 --
 -- 행복도 표시는 포에버 펫 초상화에 이미 있어서(PetFrameHappiness) 따로 만들지 않고, 불만일 때 알림만 띄운다.
 -- 스마트 펫 키는 매크로로 충분해서(소환 -> 부활 -> 치료) 게임에서 주문 이름을 가져와 매크로를 만들어 준다.
--- 먹이 키는 먹일 음식을 고르는 게 매크로로는 안 되므로 보안 버튼(EzyWOWFPetFeedButton)에
--- "/cast 먹이 주기" + "/use 가방 칸" 매크로를 넣는다. 음식은 C_PetInfo.CanPetEatItem으로 고른다.
--- 이 버튼은 "뗄 때" 동작하게 고정한다(useOnKeyDown=false). 매크로의 /click은 뗄 때 누르는 것으로 처리돼서,
--- 키를 누를 때 발동 설정(ActionButtonUseKeyDown)이 켜져 있으면 /click이 아무 일도 안 하기 때문이다.
+-- 먹이 키·화면 먹이 버튼은 펫 먹이(PetFeed.lua) 몫이고, 여기는 그쪽 먹이 부족 한 줄을 알림에 같이 띄운다.
 
 local _, ns = ...
 local Clean, Print = ns.Clean, ns.Print
 
-local FEED_BUTTON  = "EzyWOWFPetFeedButton"
-local FEED_BINDING = "CLICK " .. FEED_BUTTON .. ":LeftButton"
+local FEED_BINDING = "CLICK EzyWOWFPetFeedButton:LeftButton"   -- 불만 알림에 먹이 키를 같이 알려 준다
 local PET_MACRO    = "펫 관리"
-local FEED_MACRO   = "펫 먹이"
 local MACRO_ICON   = "INV_MISC_QUESTIONMARK"
 
 -- 주문 번호 (이름은 게임에서 가져온다)
@@ -23,17 +18,13 @@ local FALLBACK_NAMES = {
 	[DISMISS_PET] = "야수 소환 해제", [FEED_PET] = "먹이 주기",
 }
 
-local FOOD_LEVEL_GAP = 10     -- 펫보다 이만큼 낮은 음식까지는 행복도가 제대로 오른다
 local LOGIN_GRACE = 5         -- 접속·지역 이동 직후 펫이 다시 나타나기를 기다리는 시간
-
-_G["BINDING_NAME_" .. FEED_BINDING] = "펫 먹이 주기 (알맞은 음식 자동 선택)"
 
 local M = ns:NewModule("HunterPet", {
 	title = "펫 도우미",
 	category = "hunter",
 	icon = "Interface\\Icons\\Ability_Hunter_BeastTraining",
 	order = 10,
-	bindings = { FEED_BINDING },
 	defaults = {
 		enabled = true,
 		alertDead = true,
@@ -53,12 +44,8 @@ local moveMode = false
 local petWasDead = false
 local graceUntil = 0
 local lastState = {}
-local food                -- 먹이 키에 연결된 음식
-local pendingFeed = false
 local ticker              -- 알림 검사 타이머
 local shownText, shownWidth, shownHeight   -- 지금 화면에 그려 둔 글자·크기
-
-local GetItemInfoAPI = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 
 local function SpellName(id)
 	local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
@@ -203,6 +190,9 @@ local function Update()
 		lines[#lines + 1] = ("|TInterface\\Icons\\INV_Ammo_Arrow_02:22:22:0:0|t |cffff9933%s|r"):format(message)
 	end
 
+	local foodLine = ns.PetFeedAlertLine and ns.PetFeedAlertLine()
+	if foodLine then lines[#lines + 1] = Line(FEED_PET, "|cffff9933", foodLine) end
+
 	-- 상태가 새로 나빠질 때만 소리를 낸다.
 	if (state == "dead" and lastState.pet ~= "dead") or (ammoLow and not lastState.ammoLow) then
 		if #lines > 0 then PlayAlert() end
@@ -258,83 +248,6 @@ local function ResetPosition()
 end
 
 ---------------------------------------------------------------------------
--- 먹이 키
----------------------------------------------------------------------------
-local feed = CreateFrame("Button", FEED_BUTTON, UIParent, "SecureActionButtonTemplate")
-feed:SetSize(1, 1)
-feed:SetPoint("CENTER")
-feed:SetAlpha(0)
-feed:EnableMouse(false)
-feed:RegisterForClicks("AnyUp", "AnyDown")
-feed:SetAttribute("useOnKeyDown", false)
-
--- 행복도가 제대로 오르는 음식(펫 레벨 - FOOD_LEVEL_GAP 이상) 중 가장 낮은 것을 쓴다. 좋은 음식은 아껴 둔다.
--- 그런 음식이 없으면 가진 것 중 가장 높은 것.
-local function ChooseFood()
-	if not (C_PetInfo and C_PetInfo.CanPetEatItem and C_Container) then return nil end
-	if not UnitExists("pet") or Clean(UnitIsDead("pet")) then return nil end
-	local petLevel = Clean(UnitLevel("pet")) or 1
-	local good, fallback
-	for bag = 0, NUM_BAG_SLOTS or 4 do
-		for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
-			local info = C_Container.GetContainerItemInfo(bag, slot)
-			local itemID = info and info.itemID
-			if itemID and not info.isLocked then
-				local ok, edible = pcall(C_PetInfo.CanPetEatItem, itemID)
-				if ok and Clean(edible) then
-					local itemLevel = select(4, GetItemInfoAPI(itemID)) or 0
-					local c = { bag = bag, slot = slot, itemID = itemID, level = itemLevel,
-						count = info.stackCount or 1, link = info.hyperlink }
-					if itemLevel >= petLevel - FOOD_LEVEL_GAP then
-						if not good or c.level < good.level or (c.level == good.level and c.count > good.count) then
-							good = c
-						end
-					elseif not fallback or c.level > fallback.level then
-						fallback = c
-					end
-				end
-			end
-		end
-	end
-	return good or fallback
-end
-
-local function UpdateFeed()
-	if not db then return end
-	if InCombatLockdown() then
-		pendingFeed = true
-		return
-	end
-	pendingFeed = false
-	local before = food and food.itemID
-	food = (db.enabled and isHunter) and ChooseFood() or nil
-	local macro = food and ("/cast %s\n/use %d %d"):format(SpellName(FEED_PET), food.bag, food.slot) or nil
-	feed:SetAttribute("*type1", macro and "macro" or nil)
-	feed:SetAttribute("*macrotext1", macro)
-	if (food and food.itemID) ~= before then ns:Fire("REFRESH_UI") end
-end
-
-feed:SetScript("PostClick", function(_, _, down)
-	if down or food then return end
-	if not UnitExists("pet") or Clean(UnitIsDead("pet")) then
-		Print("먹이를 줄 펫이 없어요.")
-	else
-		Print("가방에 펫이 먹을 수 있는 음식이 없어요.")
-	end
-end)
-
-local feedQueued = false
--- 꺼져 있으면 고를 음식도 없다. 끌 때 먹이 키를 비우는 건 ApplySettings의 UpdateFeed 몫.
-local function RequestFeedUpdate()
-	if feedQueued or not (db and db.enabled and isHunter) then return end
-	feedQueued = true
-	C_Timer.After(0.3, function()
-		feedQueued = false
-		UpdateFeed()
-	end)
-end
-
----------------------------------------------------------------------------
 -- 매크로 만들기
 ---------------------------------------------------------------------------
 local function PetMacroBody()
@@ -342,11 +255,8 @@ local function PetMacroBody()
 		SpellName(REVIVE_PET), SpellName(CALL_PET), SpellName(DISMISS_PET), SpellName(MEND_PET))
 end
 
-local function FeedMacroBody()
-	return ("#showtooltip %s\n/click %s"):format(SpellName(FEED_PET), FEED_BUTTON)
-end
-
-local function MakeMacro(name, body)
+-- 캐릭터 전용 매크로를 만들거나 같은 이름이면 고친다. 펫 먹이 모듈도 쓴다.
+function ns.MakeCharacterMacro(name, body)
 	if InCombatLockdown() then
 		Print("전투 중에는 매크로를 만들 수 없어요.")
 		return
@@ -375,26 +285,16 @@ end
 ---------------------------------------------------------------------------
 ns:RegisterEvent("PLAYER_ENTERING_WORLD", function()
 	graceUntil = GetTime() + LOGIN_GRACE
-	RequestFeedUpdate()
 end)
 
 local function OnPetUnitEvent(_, unit)
-	if unit == "player" or unit == "pet" then
-		Update()
-		RequestFeedUpdate()
-	end
+	if unit == "player" or unit == "pet" then Update() end
 end
 
 -- 레벨·펫 변화는 player·pet 것만 받는다. UNIT_HAPPINESS는 유닛 필터 선례가 없고 원래 펫에만 와서 그냥 받는다.
 ns:RegisterUnitEvent("UNIT_PET", OnPetUnitEvent, "player", "pet")
 ns:RegisterUnitEvent("UNIT_LEVEL", OnPetUnitEvent, "player", "pet")
 ns:RegisterEvent("UNIT_HAPPINESS", OnPetUnitEvent)
-
-ns:RegisterEvent("BAG_UPDATE_DELAYED", RequestFeedUpdate)
-
-ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
-	if pendingFeed then UpdateFeed() end
-end)
 
 -- 펫 없이(또는 죽은 채로) 전투에 들어가면 소리로 한 번 더 알린다.
 ns:RegisterEvent("PLAYER_REGEN_DISABLED", function()
@@ -414,20 +314,12 @@ end
 function M:OnLogin()
 	isHunter = select(2, UnitClass("player")) == "HUNTER"
 	SyncTicker()
-	UpdateFeed()
 end
 
 function M:ApplySettings(changes)
 	if changes.enabled == false and moveMode then SetMoveMode(false) end
 	SyncTicker()
 	Update()
-	UpdateFeed()
-end
-
-local function FoodText()
-	if not isHunter then return "먹일 음식:  |cff808080사냥꾼만 쓸 수 있어요|r" end
-	if not food then return "먹일 음식:  |cff808080없음 (펫이 없거나 먹을 음식이 없어요)|r" end
-	return ("먹일 음식:  %s  |cff999999(%d개, 아이템 레벨 %d)|r"):format(food.link or ("item:" .. food.itemID), food.count, food.level)
 end
 
 function M:BuildOptions(b)
@@ -466,19 +358,7 @@ function M:BuildOptions(b)
 		.. "Shift: 소환 해제 / Ctrl: 죽은 펫이 사라져서 부르기가 안 될 때 되살리기.\n"
 		.. "매크로는 게임에 저장되고 기본 단축키가 붙은 행동 단축바 칸에 두면 단축키 초기화 버그도 피할 수 있어요.")
 	b:Buttons{
-		{ text = "펫 매크로 만들기", width = 150, onClick = function() MakeMacro(PET_MACRO, PetMacroBody()) end },
+		{ text = "펫 매크로 만들기", width = 150, onClick = function() ns.MakeCharacterMacro(PET_MACRO, PetMacroBody()) end },
 	}
-
-	b:Header("먹이 키")
-	b:Text("누르면 가방에서 펫이 먹을 수 있는 음식을 골라 먹입니다. 펫 레벨에 맞는 음식 중 가장 낮은 것을 써서 "
-		.. "좋은 음식은 아껴 둡니다. (전투 중에는 먹이를 줄 수 없어요)")
-	b:KeyBind{ command = FEED_BINDING, label = "먹이 주기", depends = "enabled" }
-	b:Text(FoodText, { font = "GameFontHighlight" })
-	b:Buttons{
-		{
-			text = "먹이 매크로 만들기", width = 150,
-			onClick = function() MakeMacro(FEED_MACRO, FeedMacroBody()) end,
-			tooltip = "단축키 대신 행동 단축바에 올려 쓰는 매크로를 만듭니다. 누르면 위의 먹이 키와 똑같이 동작합니다.",
-		},
-	}
+	b:Text("먹이 키·화면 먹이 버튼·먹일 음식 등록은 " .. ns:SettingsPath("PetFeed") .. "에 있어요.", { color = { 0.6, 0.6, 0.6 } })
 end

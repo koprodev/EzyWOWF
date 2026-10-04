@@ -4,7 +4,9 @@
 -- 두 가지 방법:
 --   캐릭터 목록: 캐릭터마다 접속할 때와 나갈 때(/reload 포함) 설정을 계정 공용 저장 파일(EzyWOWFDB.characterCopy)에
 --               자동으로 기록해 두고, B에서 목록의 A를 골라 바로 가져온다.
---   글자 한 줄: 내보냈다가 붙여 넣는다. (MySlot과 같은 방식) 저장 파일을 거치지 않아 다른 계정으로도 옮길 수 있다.
+--   글자 한 줄: A에서 내보낸 글자를 B 계정에 붙여 넣으면 B 계정의 캐릭터 목록에 A가 올라간다. (MySlot과 같은 방식)
+--               애드온은 남의 계정 저장 파일을 못 읽어서, 계정을 건너는 길은 이 글자뿐이다.
+--               이 캐릭터 자신의 글자를 붙여 넣으면 목록 대신 그때 설정으로 되돌린다.
 --
 -- 가져오는 순서가 중요하다: 매크로를 먼저 만들어야 단축바에 매크로를 놓을 수 있다.
 -- 단축바 칸
@@ -203,24 +205,32 @@ local function Collect()
 	}
 end
 
-local function Export()
-	return ns.EncodeData(PREFIX, Collect())
-end
-
--- 지금 캐릭터의 설정을 캐릭터 목록에 기록한다.
-local function Snapshot()
-	local name = saved and CharacterName()
-	if not name then return end
+-- 목록에 보여 줄 이 캐릭터 정보. 글자에도 넣어서 다른 계정 목록에서도 똑같이 보이게 한다.
+local function Profile()
 	local className, classFile = UnitClass("player")
-	saved[name] = {
+	return {
 		name = PlayerDisplayName(),
 		realm = RealmName(),
 		class = className,
 		classFile = classFile,
 		level = UnitLevel("player"),
 		time = time(),
-		data = Collect(),
 	}
+end
+
+local function Export()
+	local data = Collect()
+	data.profile = Profile()
+	return ns.EncodeData(PREFIX, data)
+end
+
+-- 지금 캐릭터의 설정을 캐릭터 목록에 기록한다.
+local function Snapshot()
+	local name = saved and CharacterName()
+	if not name then return end
+	local record = Profile()
+	record.data = Collect()
+	saved[name] = record
 end
 
 -- 접속 직후에는 단축바가 아직 비어 있을 수 있어서 조금 기다렸다가 기록한다.
@@ -351,13 +361,6 @@ local function ApplyData(data)
 		:format(tostring(data.fromName or data.from or "?"), table.concat(report, ", "))
 end
 
-local function Import(text)
-	if InCombatLockdown() then return false, "전투 중에는 가져올 수 없어요." end
-	local ok, data = ns.DecodeData(PREFIX, text, LEGACY_PREFIX)
-	if not ok then return false, data end
-	return ApplyData(data)
-end
-
 ---------------------------------------------------------------------------
 -- 캐릭터 목록
 ---------------------------------------------------------------------------
@@ -365,6 +368,18 @@ StaticPopupDialogs["EZYWOWF_CHARCOPY_IMPORT"] = {
 	text = "%s",
 	button1 = "가져오기",
 	button2 = "취소",
+	OnAccept = function(_, onAccept) onAccept() end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
+-- 글자로 목록에 올린 직후. 지금 안 가져와도 목록에 남는다.
+StaticPopupDialogs["EZYWOWF_CHARCOPY_ADDED"] = {
+	text = "%s",
+	button1 = "지금 가져오기",
+	button2 = "나중에",
 	OnAccept = function(_, onAccept) onAccept() end,
 	timeout = 0,
 	whileDead = true,
@@ -451,26 +466,77 @@ local function SelectedSummary()
 	for _, action in pairs(type(data.actions) == "table" and data.actions or {}) do
 		if type(action) == "table" and action.t ~= "other" then slots = slots + 1 end
 	end
-	return ("|cffcccccc%s 기록 · 단축바 %d칸 · 단축키 %d개 · 매크로 %d개|r"):format(
+	-- 글자로 올린 기록은 A가 접속해도 저절로 새로워지지 않는다
+	return ("|cffcccccc%s%s 기록 · 단축바 %d칸 · 단축키 %d개 · 매크로 %d개|r"):format(
+		record.fromText and "글자로 추가 · " or "",
 		Age(time() - (record.time or 0)), slots, Count(data.bindings), Count(data.macros))
 end
 
-local function ImportFrom(name)
+-- 덮어쓰기 전에 한 번 묻는다. 직업이 다르면 경고도 붙인다.
+local function ConfirmImport(which, message, record)
 	if InCombatLockdown() then
 		Print("전투 중에는 가져올 수 없어요.")
 		return
 	end
-	local record = saved and saved[name]
-	if not record then return end
-	local message = ("%s\n\n이 캐릭터의 설정을 가져올까요?\n지금 캐릭터의 단축바·단축키를 덮어씁니다."):format(DisplayName(name, record))
 	local _, myClass = UnitClass("player")
 	if record.classFile and record.classFile ~= myClass then
 		message = message .. "\n\n|cffff8800직업이 달라서 이 캐릭터가 모르는 기술 칸은 비워집니다.|r"
 	end
-	StaticPopup_Show("EZYWOWF_CHARCOPY_IMPORT", message, nil, function()
+	StaticPopup_Show(which, message, nil, function()
 		local _, result = ApplyData(record.data)
 		Print(result)
 	end)
+end
+
+local function ImportFrom(name)
+	local record = saved and saved[name]
+	if not record then return end
+	ConfirmImport("EZYWOWF_CHARCOPY_IMPORT",
+		("%s\n\n이 캐릭터의 설정을 가져올까요?\n지금 캐릭터의 단축바·단축키를 덮어씁니다."):format(DisplayName(name, record)),
+		record)
+end
+
+local function TextValue(v)
+	return type(v) == "string" and v ~= "" and v or nil
+end
+
+-- 붙여 넣은 글자를 이 계정의 캐릭터 목록에 올린다. 같은 캐릭터가 이미 있으면 붙여 넣은 쪽으로 바꾼다.
+local function AddFromText(text)
+	local ok, data = ns.DecodeData(PREFIX, text, LEGACY_PREFIX)
+	if not ok then return false, data end
+	if data.v ~= 1 then return false, "이 버전에서 읽을 수 없는 설정입니다." end
+	local key = TextValue(data.from)
+	if not key then return false, "어느 캐릭터의 글자인지 알 수 없어요." end
+	local profile = type(data.profile) == "table" and data.profile or {}
+	data.profile = nil
+
+	-- 자기 글자는 목록에 올려 봐야 다음 기록에 덮이니, 백업 되돌리기로 쓴다
+	if key == CharacterName() then
+		ConfirmImport("EZYWOWF_CHARCOPY_IMPORT",
+			"이 캐릭터에서 내보낸 글자예요.\n그때 설정으로 되돌릴까요?\n지금 캐릭터의 단축바·단축키를 덮어씁니다.",
+			{ data = data })
+		return true
+	end
+
+	-- 옛 글자에는 profile이 없어 직업·레벨을 모른다. 기록 시각은 붙여 넣은 때로 친다.
+	local record = {
+		name = TextValue(profile.name) or TextValue(data.fromName),
+		realm = TextValue(profile.realm),
+		class = TextValue(profile.class),
+		classFile = TextValue(profile.classFile),
+		level = type(profile.level) == "number" and profile.level or nil,
+		time = type(profile.time) == "number" and profile.time or time(),
+		fromText = true,
+		data = data,
+	}
+	saved[key] = record
+	selected = key
+	ns:Fire("REFRESH_UI")
+	ConfirmImport("EZYWOWF_CHARCOPY_ADDED",
+		("%s\n\n캐릭터 목록에 추가했어요. 이 계정의 다른 캐릭터도 목록에서 고를 수 있어요.\n\n"
+			.. "지금 이 캐릭터로 가져올까요?\n지금 캐릭터의 단축바·단축키를 덮어씁니다."):format(DisplayName(key, record)),
+		record)
+	return true, ("캐릭터 목록에 추가했어요: %s"):format(DisplayName(key, record))
 end
 
 ---------------------------------------------------------------------------
@@ -487,7 +553,8 @@ function M:BuildOptions(b)
 
 	b:Header("캐릭터 골라서 가져오기")
 	b:Text("캐릭터마다 접속할 때와 나갈 때 설정을 자동으로 기록해 둡니다. "
-		.. "목록에는 이 기능이 생긴 뒤로 한 번이라도 접속한 캐릭터가 나와요.", { color = { 0.7, 0.7, 0.7 } })
+		.. "목록에는 이 계정에서 접속한 캐릭터가 나와요. 다른 계정 캐릭터는 아래 [목록에 추가]로 올릴 수 있어요.",
+		{ color = { 0.7, 0.7, 0.7 } })
 	b:Dropdown{
 		label = "가져올 캐릭터",
 		width = 260,
@@ -509,30 +576,34 @@ function M:BuildOptions(b)
 	}
 
 	b:Header("글자로 옮기기")
-	b:Text("다른 계정으로 옮기거나 따로 보관할 때 씁니다.\n"
+	b:Text("다른 계정 캐릭터를 위 목록에 올리거나, 설정을 따로 보관할 때 씁니다.\n"
 		.. "1) A로 접속해서 [이 캐릭터 내보내기]를 누르고 글자를 복사해 둡니다.\n"
-		.. "2) 이 캐릭터로 접속해서 [가져오기]에 붙여 넣습니다.")
+		.. "2) 이 계정의 아무 캐릭터로 접속해서 [목록에 추가]에 붙여 넣습니다. "
+		.. "그러면 이 계정의 모든 캐릭터가 위 목록에서 A를 고를 수 있어요.")
+	b:Text("- 글자로 추가한 캐릭터는 저절로 새로워지지 않아요. A의 설정이 바뀌면 다시 붙여 넣으세요.\n"
+		.. "- 이 캐릭터에서 내보낸 글자를 붙여 넣으면 그때 설정으로 되돌립니다.",
+		{ color = { 0.7, 0.7, 0.7 } })
 	b:Buttons{
 		{
 			text = "이 캐릭터 내보내기", width = 150,
 			onClick = function()
 				ns.UI.ShowTextDialog{
 					title = "캐릭터 설정 내보내기",
-					help = "Ctrl+C로 복사해서 메모장 등에 보관한 뒤, 다른 캐릭터에서 [가져오기]에 붙여 넣으세요.",
+					help = "Ctrl+C로 복사해서 메모장 등에 보관한 뒤, 다른 계정 캐릭터의 [목록에 추가]에 붙여 넣으세요.",
 					text = Export(),
 					readOnly = true,
 				}
 			end,
 		},
 		{
-			text = "가져오기", width = 110,
+			text = "목록에 추가", width = 110,
 			onClick = function()
 				ns.UI.ShowTextDialog{
-					title = "캐릭터 설정 가져오기",
-					help = "다른 캐릭터에서 내보낸 글자를 Ctrl+V로 붙여 넣고 [가져오기]를 누르세요. 지금 캐릭터의 설정을 덮어씁니다.",
+					title = "캐릭터 목록에 추가",
+					help = "다른 캐릭터에서 내보낸 글자를 Ctrl+V로 붙여 넣고 [목록에 추가]를 누르세요. 추가한 뒤 지금 가져올지 물어봐요.",
 					text = "",
-					button = "가져오기",
-					onAccept = Import,
+					button = "목록에 추가",
+					onAccept = AddFromText,
 				}
 			end,
 		},
@@ -551,7 +622,8 @@ function M:BuildOptions(b)
 	b:Check{ key = "layout", label = "편집 모드 레이아웃" }
 	b:Text("- 아직 배우지 않은 기술은 비워 둡니다. 배운 뒤 다시 가져오면 그 자리에 놓여요. "
 		.. "낮은 등급만 배웠으면 배운 등급을 놓습니다.\n"
-		.. "- 계정 공용 매크로와 EzyWOWF 설정은 모든 캐릭터가 이미 같이 씁니다.\n"
+		.. "- 계정 공용 매크로와 EzyWOWF 설정은 같은 계정 캐릭터끼리 이미 같이 씁니다. "
+		.. "그래서 다른 계정에서 가져오면 A 계정의 공용 매크로와 공용 편집 모드 레이아웃은 따라오지 않아요.\n"
 		.. "- 전투 중에는 가져올 수 없어요.",
 		{ color = { 0.7, 0.7, 0.7 } })
 end

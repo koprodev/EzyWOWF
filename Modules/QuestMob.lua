@@ -5,6 +5,7 @@
 -- 몹 이름은 두 군데서 모은다.
 --   1) 퀘스트 목표 문구: "5/6 힘센 바위턱트로그 처치" -> "힘센 바위턱트로그"
 --   2) 이름표·마우스오버·대상의 툴팁 퀘스트 정보 (아이템을 떨구는 몹도 잡힌다)
+-- 찾은 몹에 징표를 붙이는 것도 같은 매크로 안의 "/tm" 한 줄이다(SetRaidTarget은 애드온이 직접 못 부른다).
 
 local _, ns = ...
 local Clean, Print = ns.Clean, ns.Print
@@ -16,6 +17,9 @@ local MAX_MACRO_LEN  = 1000
 local KILL_SUFFIXES  = { " 처치", " 처치함", " slain", " killed" }
 local MARKER_ATLAS   = "QuestNormal"
 local MARKER_TEXTURE = "Interface\\GossipFrame\\AvailableQuestIcon"
+local RAID_MARKS     = { 8, 7, 6, 5, 4, 3, 2, 1 }   -- 고르는 순서: 해골·가위표·네모·달·세모·다이아몬드·동그라미·별 (징표 단축바와 같음)
+local RAID_MARK_ICON = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_%d"
+local DEFAULT_MARK   = 7                            -- 가위표(X)
 
 _G["BINDING_NAME_" .. TARGET_BINDING] = "가까운 퀘스트 몹 대상 잡기"
 
@@ -30,6 +34,8 @@ local M = ns:NewModule("QuestMob", {
 		watchedOnly = false,
 		showMarker = true,
 		markerSize = 20,
+		markTarget = false,
+		markIcon = DEFAULT_MARK,
 	},
 })
 
@@ -150,18 +156,35 @@ local function CollectTargets()
 	return list, fromObjectives, open, entries >= 2, scanLossy
 end
 
+local function RaidMarkIndex()
+	local index = tonumber(db.markIcon)
+	if index and index >= 1 and index <= 8 and index % 1 == 0 then return index end
+	return DEFAULT_MARK
+end
+
+-- 찾은 몹에만 붙도록 원래 대상으로 돌아가기 전에 둔다. "~"는 이미 징표가 있는 몹이면 그냥 지나간다
+-- (블리자드 /tm 규칙: 같은 징표를 다시 눌러 떼지도, 파티장이 붙인 해골을 덮지도 않는다).
+-- 공격대에서는 권한이 없으면 오류만 나서 빼 둔다.
+local function MarkLine()
+	if not db.markTarget then return nil end
+	local command = type(SLASH_TARGET_MARKER1) == "string" and SLASH_TARGET_MARKER1 or "/tm"
+	return ("%s [exists,nogroup:raid] ~%d"):format(command, RaidMarkIndex())
+end
+
 -- 앞에서부터 찾다가 살아 있는 몹을 잡으면 멈춘다. 아무도 없으면 원래 대상으로 돌아간다.
 local function BuildMacro(list)
 	if #list == 0 then return nil end
 	local lines = { "/cleartarget" }
+	local mark = MarkLine()
 	local tail = "/targetlasttarget [noexists]"
-	local length = #lines[1] + #tail + 2
+	local length = #lines[1] + #tail + 2 + (mark and #mark + 1 or 0)
 	for _, t in ipairs(list) do
 		local add = "/targetexact [noexists] " .. t.name .. "\n/cleartarget [dead]"
 		if length + #add + 1 > MAX_MACRO_LEN then break end
 		lines[#lines + 1] = add
 		length = length + #add + 1
 	end
+	if mark then lines[#lines + 1] = mark end
 	lines[#lines + 1] = tail
 	return table.concat(lines, "\n")
 end
@@ -391,6 +414,16 @@ local function PrintList()
 	end
 end
 
+local function RaidMarkOptions()
+	local list = {}
+	for _, index in ipairs(RAID_MARKS) do
+		local name = _G["RAID_TARGET_" .. index]
+		if type(name) ~= "string" then name = "징표 " .. index end
+		list[#list + 1] = { value = index, text = ("|T%s:14|t %s"):format(RAID_MARK_ICON:format(index), name) }
+	end
+	return list
+end
+
 local function TargetsText()
 	if not db.enabled then return "대상 키에 들어간 몹:  |cff808080기능 꺼짐|r" end
 	if #targets == 0 then return "대상 키에 들어간 몹:  |cff808080없음|r" end
@@ -413,6 +446,15 @@ function M:BuildOptions(b)
 		tooltip = "퀘스트 몹의 이름표 왼쪽에 느낌표를 띄웁니다. 이름표가 켜져 있어야 보입니다(기본 단축키 V).",
 	}
 	b:Slider{ key = "markerSize", label = "표시 크기", min = 12, max = 40, step = 1, depends = { "enabled", "showMarker" } }
+	b:Check{
+		key = "markTarget", label = "찾은 몹에 징표 붙이기", depends = "enabled", indent = 20,
+		tooltip = "대상 키로 퀘스트 몹을 잡으면 그 몹에 아래에서 고른 징표를 붙입니다. 징표는 파티원에게도 보입니다.\n"
+			.. "못 찾아서 원래 대상으로 돌아가면 붙이지 않고, 이미 징표가 붙은 몹은 그대로 둡니다. 공격대에서는 붙이지 않습니다.",
+	}
+	b:Dropdown{
+		key = "markIcon", label = "붙일 징표", options = RaidMarkOptions, width = 160, indent = 20,
+		depends = { "enabled", "markTarget" },
+	}
 	b:Buttons{
 		{
 			text = "몹 목록 보기", onClick = PrintList,

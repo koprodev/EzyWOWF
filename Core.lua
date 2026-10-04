@@ -249,6 +249,16 @@ function ns.IsSpellKnown(spellID)
 	return IsPlayerSpell and IsPlayerSpell(spellID) and true or false
 end
 
+-- 배운 등급의 주문 번호. 등급마다 번호가 다르다(천벌 1등급 5176, 2등급 5177 …).
+-- 그 번호를 모르면 같은 이름으로 물어 배운 최고 등급을 쓴다. 하나도 못 배웠으면 nil.
+function ns.KnownSpellRank(spellID)
+	if ns.IsSpellKnown(spellID) then return spellID end
+	local name = C_Spell.GetSpellName and ns.Clean(C_Spell.GetSpellName(spellID))
+	local info = name and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(name)
+	local best = type(info) == "table" and ns.Clean(info.spellID) or nil
+	if type(best) == "number" and ns.IsSpellKnown(best) then return best end
+end
+
 function ns.FormatMoney(copper)
 	if GetMoneyString then return GetMoneyString(copper, true) end
 	local gold = math.floor(copper / 10000)

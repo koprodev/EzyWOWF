@@ -3,6 +3,8 @@
 --   b:Header(text)
 --   b:Text(text | function, { font=, color=, indent= })
 --   b:Check{ key=, label=, tooltip=, depends= }   켜짐/꺼짐 스위치. [저장]을 눌러야 반영된다.
+--   b:CheckGrid{ label=, items={ { key=, text=, icon=, title=, tooltip= }, ... }, columns=, depends= }
+--     네모 체크박스를 한 줄에 columns개(기본: 전부)씩 늘어놓는다. 항목마다 설정 키 하나, [저장]을 눌러야 반영된다.
 --   b:Slider{ key=, label=, min=, max=, step=, format=, depends= }
 --   b:KeyBind{ command=, label=, depends= }
 --   b:Buttons{ { text=, textFunc=, onClick=, disabled=, tooltip=, width= }, ... }
@@ -246,6 +248,138 @@ function Builder:Check(opts)
 
 	b:Place(sw, 26, opts.indent, 2)
 	return b:Track(sw)
+end
+
+---------------------------------------------------------------------------
+-- 체크박스 격자 (항목마다 켜짐/꺼짐 하나. 값은 [저장]을 눌러야 반영)
+---------------------------------------------------------------------------
+local BOX, ICON = 14, 16
+local CHECK_MARK = "Interface\\Buttons\\UI-CheckBox-Check"
+
+local function ShowCellTooltip(cell)
+	GameTooltip:SetOwner(cell, "ANCHOR_RIGHT")
+	GameTooltip:SetText(cell.tipTitle, 1, 0.82, 0)
+	if cell.tipText then GameTooltip:AddLine(cell.tipText, 1, 1, 1, true) end
+	GameTooltip:Show()
+end
+
+function Builder:CheckGrid(opts)
+	local b = self
+	local width = b.width - PADDING * 2 - (opts.indent or 0)
+	local columns = math.max(1, opts.columns or #opts.items)
+	local cellW = math.floor(width / columns)
+
+	local grid = CreateFrame("Frame", nil, b.page)
+	local top = 0
+	local title
+	if opts.label then
+		title = grid:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		title:SetPoint("TOPLEFT", 4, 0)
+		title:SetText(opts.label)
+		top = math.max(title:GetStringHeight() or 0, 14) + 6
+	end
+
+	local cells = {}
+	local rowH = 22
+	for i, item in ipairs(opts.items) do
+		local cell = CreateFrame("CheckButton", nil, grid)
+
+		local box = cell:CreateTexture(nil, "BACKGROUND")   -- 테두리 겸 바탕
+		box:SetSize(BOX, BOX)
+		box:SetPoint("LEFT", 4, 0)
+		local fill = cell:CreateTexture(nil, "BORDER")
+		fill:SetPoint("TOPLEFT", box, "TOPLEFT", 1, -1)
+		fill:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -1, 1)
+		local mark = cell:CreateTexture(nil, "ARTWORK")
+		mark:SetSize(BOX + 6, BOX + 6)   -- 체크 그림은 가장자리가 비어 있어서 상자보다 살짝 크게
+		mark:SetPoint("CENTER", box, "CENTER", 1, 0)
+		mark:SetTexture(CHECK_MARK)
+		mark:SetDesaturated(true)
+		local hover = cell:CreateTexture(nil, "HIGHLIGHT")
+		hover:SetAllPoints(box)
+		UI.ColorTexture(hover, Theme.hover)
+
+		-- 아이콘은 글자 속 |T|t가 아니라 따로 그린다. 글자색이 안 먹어서 막힘을 흐리게 못 보여 주니까.
+		local icon
+		if item.icon then
+			icon = cell:CreateTexture(nil, "ARTWORK")
+			icon:SetSize(ICON, ICON)
+			icon:SetPoint("LEFT", box, "RIGHT", 6, 0)
+			icon:SetTexture(item.icon)
+		end
+
+		local label = cell:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		label:SetPoint("LEFT", icon or box, "RIGHT", icon and 4 or 6, 0)
+		label:SetPoint("RIGHT", cell, "RIGHT", -2, 0)
+		label:SetJustifyH("LEFT")
+		label:SetWordWrap(false)
+		label:SetText(item.text or "")
+		rowH = math.max(rowH, (label:GetStringHeight() or 0) + 6)
+		-- 칸이 넓어도 상자·아이콘·글자 위에서만 눌린다
+		local right = 4 + BOX + 6 + (icon and ICON or 0)
+		if item.text then right = right + (icon and 4 or 0) + (label:GetStringWidth() or 0) end
+		cell:SetHitRectInsets(0, math.max(0, cellW - right - 4), 0, 0)
+
+		local itemOpts = { key = item.key, depends = opts.depends, disabled = opts.disabled }
+		-- 저장 대기는 주황 테두리(2px)로도 보인다. 글자 없는 아이콘 칸도 티가 나야 하니까.
+		local function Paint(on, enabled, pending)
+			local alpha = enabled and 1 or 0.35
+			local ring = pending and enabled
+			UI.ColorTexture(box, ring and PENDING_COLOR or (on and Theme.accent or Theme.border), alpha)
+			local inset = ring and 2 or 1
+			fill:ClearAllPoints()
+			fill:SetPoint("TOPLEFT", box, "TOPLEFT", inset, -inset)
+			fill:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -inset, inset)
+			UI.ColorTexture(fill, on and Theme.accent or Theme.bg, on and alpha or nil)
+			mark:SetVertexColor(1, 1, 1, alpha)
+			mark:SetShown(on)
+			if icon then
+				icon:SetDesaturated(not enabled)
+				icon:SetAlpha(alpha)
+			end
+		end
+
+		cell:SetScript("OnClick", function(self)
+			local on = self:GetChecked() and true or false
+			PlayClick(on)
+			b:Set(itemOpts, on)
+			Paint(on, true, ns:IsPending(b.module, item.key))
+		end)
+		cell.tipTitle = item.title or item.text
+		cell.tipText = item.tooltip
+		if cell.tipTitle then
+			cell:SetScript("OnEnter", ShowCellTooltip)
+			cell:SetScript("OnLeave", GameTooltip_Hide)
+		end
+
+		function cell:Refresh(enabled)
+			local on = b:Get(itemOpts) and true or false
+			self:SetChecked(on)
+			self:SetEnabled(enabled)
+			local pending = ns:IsPending(b.module, item.key)
+			Paint(on, enabled, pending)
+			label:SetTextColor(unpack(b:LabelColor(itemOpts, pending)))
+		end
+
+		cells[i] = cell
+	end
+
+	for i, cell in ipairs(cells) do
+		local col, row = (i - 1) % columns, math.floor((i - 1) / columns)
+		cell:SetSize(cellW, rowH)
+		cell:SetPoint("TOPLEFT", grid, "TOPLEFT", col * cellW, -(top + row * rowH))
+	end
+
+	function grid:Refresh()
+		local enabled = not b:IsDisabled(opts)
+		if title then title:SetTextColor(unpack(enabled and NORMAL_COLOR or DISABLED_COLOR)) end
+		for _, cell in ipairs(cells) do cell:Refresh(enabled) end
+	end
+
+	local height = top + math.ceil(#cells / columns) * rowH
+	grid:SetSize(width, height)
+	b:Place(grid, height, opts.indent, ROW_GAP)
+	return b:Track(grid)
 end
 
 ---------------------------------------------------------------------------

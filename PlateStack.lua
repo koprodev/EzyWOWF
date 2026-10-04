@@ -3,14 +3,18 @@
 -- 줄마다 순서(order)를 정해 두면 보이는 줄만 위에서부터 쌓는다. 숨은 줄은 자리도 안 차지한다.
 -- 이름표의 유닛 프레임은 여러 이름표가 돌려 쓰는 물건이라 컨테이너는 이름표 자체에 붙이고, 생명력 바는 매번 다시 찾는다.
 -- 적이 시전하면 시전 바가 생명력 바 바로 밑을 차지하므로 그동안만 시전 바 밑으로 비켜 간다.
---   Stack:RegisterRow(key, order, onLost)  onLost(plate): 생명력 바가 사라져서 그 줄을 치웠을 때
+-- 옆 상자(하나만): 왼쪽 끝에 붙고, 보이는 동안 다른 줄은 그 오른쪽으로 비켜 쌓는다. 높이는 오른쪽 줄 묶음에 맞춘다.
+--   Stack:RegisterRow(key, order, onLost[, sideWidth])  onLost(plate): 생명력 바가 사라져서 그 줄을 치웠을 때
+--                                          sideWidth를 주면 그 너비의 옆 상자. Show·SetHeight의 height는 최소 높이가 된다
 --   Stack:Acquire(plate, key, create)      그 이름표의 줄 프레임. 처음이면 create(container)로 만든다
 --   Stack:Show(plate, key, height)         붙일 생명력 바가 없으면 false (그 이름표의 줄은 전부 치워진다)
 --   Stack:Hide(plate, key)                 onLost는 부르지 않는다
 --   Stack:SetHeight(plate, key, height)    보이는 줄의 두께만 바꾼다
 --   Stack:Invalidate([plate])              붙은 자리를 다음에 다시 계산한다 (이름표를 안 주면 전부)
+--   Stack:SetPlateScale(plate, scale)      그 이름표의 줄 묶음 배율 (블리자드 이름표를 줄일 때 같이 줄인다)
 --   Stack.CreateBar(parent)                줄에 쓰는 평면 막대 (테두리·빈 트랙 + 오른쪽 숫자 bar.text)
---   Stack.style / Stack:SetStyle(t)        모든 줄이 같이 쓰는 모양 (두께·숫자). 바뀌면 모듈은 PLATE_STYLE_CHANGED를 받는다
+--   Stack.AddBackground(frame)             테두리·빈 트랙만 깔고 트랙 텍스처를 돌려준다
+--   Stack.style / Stack:SetStyle(t)        막대 줄이 같이 쓰는 모양 (두께·숫자, 옆 상자는 빼고). 바뀌면 모듈은 PLATE_STYLE_CHANGED를 받는다
 
 local _, ns = ...
 
@@ -19,6 +23,7 @@ ns.PlateStack = Stack
 
 local GAP = 4        -- 생명력 바와의 간격 (대상 테두리가 2px 삐져나온다)
 local ROW_GAP = 3    -- 줄 사이. 테두리가 위아래로 1px씩 삐져나와서 1px 틈이 남는다
+local SIDE_GAP = 3   -- 옆 상자와 오른쪽 줄 사이. 같은 이유로 3
 local TEXT_SIZE = 9
 local TEXT_PITCH = 10  -- 숫자를 켜면 줄과 줄 사이를 이만큼은 벌려서 위아래 숫자가 안 붙게
 Stack.BAR_TEXTURE = "Interface\\Buttons\\WHITE8x8"   -- 광택 없는 단색
@@ -27,7 +32,7 @@ Stack.style = { barHeight = 4, comboHeight = 6, showPercent = false }
 Stack.BORDER_COLOR = { 0, 0, 0, 0.9 }
 Stack.TRACK_COLOR = { 0.16, 0.16, 0.16, 0.9 }         -- 빈 부분. 막대가 얼마나 찼는지 한눈에 보이게
 
--- 1px 검은 테두리 + 회색 빈 트랙. 막대(ARTWORK)가 그 위에 그려진다.
+-- 1px 검은 테두리 + 회색 빈 트랙. 막대(ARTWORK)가 그 위에 그려진다. 트랙 텍스처를 돌려준다.
 function Stack.AddBackground(bar)
 	local b, t = Stack.BORDER_COLOR, Stack.TRACK_COLOR
 	local border = bar:CreateTexture(nil, "BACKGROUND", nil, -1)
@@ -37,6 +42,7 @@ function Stack.AddBackground(bar)
 	local track = bar:CreateTexture(nil, "BACKGROUND", nil, 0)
 	track:SetAllPoints()
 	track:SetColorTexture(t[1], t[2], t[3], t[4])
+	return track
 end
 
 function Stack.CreateBar(parent)
@@ -52,13 +58,17 @@ function Stack.CreateBar(parent)
 	return bar
 end
 
-local rows = {}        -- [key] = { order =, onLost = }
+local rows = {}        -- [key] = { order =, onLost =, width = (옆 상자만) }
 local rowKeys = {}     -- 쌓는 순서대로 key
+local sideKey          -- 옆 상자 줄의 key
 local containers = {}  -- [이름표] = 컨테이너
+local scaleOf = {}     -- [이름표] = 줄 묶음 배율 (1이 아닐 때만)
 
-function Stack:RegisterRow(key, order, onLost)
+function Stack:RegisterRow(key, order, onLost, sideWidth)
 	assert(not rows[key], "PlateStack: 이미 등록된 줄 " .. tostring(key))
-	rows[key] = { order = order, onLost = onLost }
+	assert(not (sideWidth and sideKey), "PlateStack: 옆 상자는 하나만")
+	rows[key] = { order = order, onLost = onLost, width = sideWidth }
+	if sideWidth then sideKey = key end
 	rowKeys[#rowKeys + 1] = key
 	table.sort(rowKeys, function(a, b)
 		if rows[a].order ~= rows[b].order then return rows[a].order < rows[b].order end
@@ -66,21 +76,29 @@ function Stack:RegisterRow(key, order, onLost)
 	end)
 end
 
--- 보이는 줄만 차례로 쌓는다. c.visible[key] = 그 줄의 두께
+-- 보이는 줄만 차례로 쌓는다. c.visible[key] = 그 줄의 두께 (옆 상자는 최소 높이)
 local function Arrange(c)
+	local side = sideKey and c.visible[sideKey] and c.rows[sideKey]
+	local x = side and rows[sideKey].width + SIDE_GAP or 0
 	local y, bottom = 0, 0
 	local minPitch = Stack.style.showPercent and TEXT_PITCH or 0
 	for _, key in ipairs(rowKeys) do
 		local h = c.visible[key]
-		if h then
+		if h and key ~= sideKey then
 			local row = c.rows[key]
 			row:ClearAllPoints()
-			row:SetPoint("TOPLEFT", c, "TOPLEFT", 0, -y)
+			row:SetPoint("TOPLEFT", c, "TOPLEFT", x, -y)
 			row:SetPoint("TOPRIGHT", c, "TOPRIGHT", 0, -y)
 			row:SetHeight(h)
 			bottom = y + h
 			y = y + math.max(h + ROW_GAP, minPitch)
 		end
+	end
+	if side then
+		bottom = math.max(c.visible[sideKey], bottom)
+		side:ClearAllPoints()
+		side:SetPoint("TOPLEFT", c, "TOPLEFT", 0, 0)
+		side:SetSize(rows[sideKey].width, bottom)
 	end
 	c:SetHeight(math.max(bottom, 1))
 end
@@ -150,9 +168,17 @@ local function ContainerFor(plate)
 		c.plate, c.rows, c.visible = plate, {}, {}
 		c:SetScript("OnUpdate", OnUpdate)
 		c:Hide()
+		if scaleOf[plate] then c:SetScale(scaleOf[plate]) end
 		containers[plate] = c
 	end
 	return c
+end
+
+-- 묶음을 줄이면 두께·간격(붙는 거리 포함)이 같이 줄고, 폭은 생명력 바 양 끝을 그대로 따른다.
+function Stack:SetPlateScale(plate, scale)
+	scaleOf[plate] = scale ~= 1 and scale or nil
+	local c = containers[plate]
+	if c then c:SetScale(scale) end
 end
 
 function Stack:Acquire(plate, key, create)

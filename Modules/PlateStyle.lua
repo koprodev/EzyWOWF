@@ -1,4 +1,4 @@
--- 이름표 모양: 블리자드 이름표를 납작하고 차분하게, 그리고 그 밑 줄(어그로·내 상태)의 두께·숫자를 한곳에서 정한다.
+-- 이름표 모양: 블리자드 이름표를 납작하고 차분하게, 그리고 그 밑 줄(내 상태 막대)의 두께·숫자를 한곳에서 정한다.
 --
 -- 블리자드 막대: 단색 + 회색 빈 트랙 + 딱 맞는 네모 테두리(대상만 밝은 회색). 형광 반응색은 채운 부분 위에 회색을 덮어 누그러뜨리고,
 -- 레벨 상자·노란 대상 테두리는 투명하게, 이름은 작게, 시전 바는 체력 바와 같은 폭으로.
@@ -17,7 +17,7 @@ local M = ns:NewModule("PlateStyle", {
 	defaults = {
 		enabled = true,
 		nameScale = 80,     -- 블리자드 이름 크기 대비 %
-		barHeight = 4,      -- 어그로·체력·자원 막대
+		barHeight = 4,      -- 체력·자원 막대
 		comboHeight = 6,    -- 연계 점수 칸
 		showPercent = false,
 	},
@@ -236,12 +236,12 @@ function M:BuildOptions(b)
 	b:Check{ key = "enabled", label = "사용" }
 	b:Slider{ key = "nameScale", label = "몬스터 이름 크기", min = 50, max = 100, step = 5, format = "%d%%", depends = "enabled",
 		tooltip = "블리자드 기본 이름 크기에 대한 비율입니다." }
-	b:Header("이름표 밑 막대 (어그로 게이지 · 내 상태 막대)")
+	b:Header("이름표 밑 막대 (내 상태 막대)")
 	b:Slider{ key = "barHeight", label = "막대 두께", min = 2, max = 12, step = 1,
-		tooltip = "어그로·체력·마나(기력·분노)·펫 체력 막대의 두께입니다." }
+		tooltip = "체력·마나(기력·분노)·펫 체력 막대의 두께입니다." }
 	b:Slider{ key = "comboHeight", label = "연계 점수 칸 두께", min = 3, max = 12, step = 1 }
 	b:Check{ key = "showPercent", label = "퍼센트 숫자 표시",
-		tooltip = "막대 오른쪽에 85% 처럼 숫자를 띄웁니다. 켜면 숫자가 위아래로 붙지 않게 줄 간격이 조금 넓어집니다." }
+		tooltip = "막대 오른쪽에 85%처럼 숫자를 띄웁니다. 켜면 숫자가 위아래로 붙지 않게 줄 간격이 조금 넓어집니다." }
 	b:Text("- 몬스터 이름표 모양을 끄면 새로 뜨는 이름표부터 원래대로 돌아갑니다. 한 번에 되돌리려면 /reload 하세요.\n"
 		.. "- 이름표 크기·스타일은 게임 설정(인터페이스 > 이름표)을 그대로 따릅니다.",
 		{ color = { 0.7, 0.7, 0.7 } })

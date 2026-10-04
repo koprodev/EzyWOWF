@@ -2,6 +2,9 @@
 	<Binding name="EZYWOWF_TOGGLE" header="EZYWOWF" category="ADDONS">
 		EzyWOWF_ToggleWindow()
 	</Binding>
+	<Binding name="EZYWOWF_MEMO" category="ADDONS">
+		EzyWOWF_ToggleMemo()
+	</Binding>
 	<Binding name="CLICK EzyWOWFQuestItemButton:LeftButton" category="ADDONS"/>
 	<Binding name="EZYWOWF_QUESTITEM_NEXT" category="ADDONS">
 		EzyWOWF_QuestItemNext()

@@ -301,10 +301,18 @@ local BELOW_GAP = 2          -- 네모 미니맵: 지도와 아이콘 사이
 local ZOOM_RESERVE = 44      -- 네모 미니맵: 확대·축소 버튼(-, +) 자리
 local ROUND_ATTACH_Y = -38   -- 둥근 미니맵: 테두리와 좌표 아래
 
--- 네모 미니맵 밑에서 추적 아이콘이 차지한 높이 (화면 픽셀). 정보 막대가 그 아래로 비켜 선다.
+-- 네모 미니맵 밑 줄이 차지한 높이 (화면 픽셀). 정보 막대가 그 아래로 비켜 선다.
+-- 같은 줄 왼쪽 모서리의 메모 버튼(ns.MinimapMemoBelow)과 둘 중 높은 쪽이다.
 local belowPixels = 0
 function ns.MinimapBelowPixels()
-	return belowPixels
+	local memo = ns.MinimapMemoBelow and ns.MinimapMemoBelow() or 0
+	return math.max(belowPixels, memo)
+end
+
+-- 미니맵에 붙은 아이콘 크기 (지도 크기 단위). 메모 버튼이 이 크기를 따른다. 줄이 안 보이면 nil.
+local attachedSize, rowIconSize
+function ns.MinimapRowIconSize()
+	return rowIconSize
 end
 
 -- 아이콘이 너무 작아지지 않을 만큼 줄 수를 늘린다.
@@ -328,8 +336,11 @@ end
 local function PlaceAttached(list)
 	local square = ns.IsMinimapSquare and ns.IsMinimapSquare()
 	local reserve = (square and ns.IsMinimapZoomOutside and ns.IsMinimapZoomOutside()) and ZOOM_RESERVE or 0
+	-- 왼쪽 모서리의 메모 버튼 자리. 가운데 맞춤이라 양쪽을 똑같이 비운다.
+	if ns.MinimapMemoWidth then reserve = math.max(reserve, ns.MinimapMemoWidth()) end
 	local width = Minimap:GetWidth() - reserve * 2
 	local rows, cols, size = AttachedGrid(#list, width)
+	attachedSize = size
 	for i, btn in ipairs(list) do
 		local row, col = math.floor((i - 1) / cols), (i - 1) % cols   -- row 0 = 위쪽 줄
 		local inRow = math.min(cols, #list - row * cols)
@@ -381,6 +392,7 @@ local function SetupSignature(list)
 		parts[#parts + 1] = tostring(ns.IsMinimapZoomOutside and ns.IsMinimapZoomOutside())
 		parts[#parts + 1] = tostring(Minimap:GetWidth())
 		parts[#parts + 1] = tostring(Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale())
+		parts[#parts + 1] = tostring(ns.MinimapMemoWidth and ns.MinimapMemoWidth())
 	end
 	for _, e in ipairs(list) do
 		parts[#parts + 1] = e.key .. "=" .. e.castName .. "=" .. tostring(e.texture)
@@ -468,6 +480,13 @@ local function Layout(full)
 	bar:SetAlpha((db.showBar or moveMode) and 1 or 0)
 	bar:SetShown(db.enabled and (#list > 0 or moveMode))
 	mover:SetShown(moveMode)
+
+	-- 아이콘 크기가 바뀌면 같은 줄의 메모 버튼이 따라 맞춘다 (정보 막대를 옮기기 전에)
+	local rowSize = (db.enabled and db.showBar and db.underMinimap and #list > 0) and attachedSize or nil
+	if rowSize ~= rowIconSize then
+		rowIconSize = rowSize
+		ns:Fire("MINIMAP_ROW_CHANGED")
+	end
 
 	if not (db.enabled and db.showBar) then below = 0 end
 	if math.abs(below - belowPixels) > 0.5 then
