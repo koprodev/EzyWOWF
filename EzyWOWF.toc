@@ -3,7 +3,7 @@
 ## Notes: Ezy WOW Forever - all-in-one convenience toolkit for WoW Forever (Korean UI). Minimap button or /ezy
 ## Notes-koKR: Ezy WOW Forever - 와우 포에버 통합 편의 애드온. 미니맵 버튼 또는 /이지
 ## Author: koprodev
-## Version: 0.6.0
+## Version: 0.7.0
 ## IconTexture: Interface\Icons\Trade_Engineering
 ## X-Website: https://github.com/koprodev/EzyWOWF
 ## X-License: MIT
@@ -51,6 +51,8 @@ Modules\QuestItem.lua
 Modules\Tracking.lua
 Modules\QuestMob.lua
 Modules\QuestArrow.lua
+Modules\QuestReward.lua
+Modules\QuestZone.lua
 Modules\Waypoint.lua
 Modules\WindowMover.lua
 Modules\QuickBars.lua
