@@ -1,22 +1,16 @@
 -- 펫 도우미 (사냥꾼): 펫 없음/죽음/불만 · 탄약 부족 화면 알림, 스마트 펫 매크로.
 --
 -- 행복도 표시는 포에버 펫 초상화에 이미 있어서(PetFrameHappiness) 따로 만들지 않고, 불만일 때 알림만 띄운다.
--- 스마트 펫 키는 매크로로 충분해서(소환 -> 부활 -> 치료) 게임에서 주문 이름을 가져와 매크로를 만들어 준다.
+-- 스마트 펫 매크로(소환 -> 부활 -> 치료)는 직업 매크로(ClassMacros.lua) 목록에 있고, 여기 버튼은 그걸 만든다.
 -- 먹이 키·화면 먹이 버튼은 펫 먹이(PetFeed.lua) 몫이고, 여기는 그쪽 먹이 부족 한 줄을 알림에 같이 띄운다.
 
 local _, ns = ...
 local Clean, Print = ns.Clean, ns.Print
 
 local FEED_BINDING = "CLICK EzyWOWFPetFeedButton:LeftButton"   -- 불만 알림에 먹이 키를 같이 알려 준다
-local PET_MACRO    = "펫 관리"
-local MACRO_ICON   = "INV_MISC_QUESTIONMARK"
 
--- 주문 번호 (이름은 게임에서 가져온다)
-local CALL_PET, REVIVE_PET, MEND_PET, DISMISS_PET, FEED_PET = 883, 982, 136, 2641, 6991
-local FALLBACK_NAMES = {
-	[CALL_PET] = "야수 부르기", [REVIVE_PET] = "야수 되살리기", [MEND_PET] = "동물 치료",
-	[DISMISS_PET] = "야수 소환 해제", [FEED_PET] = "먹이 주기",
-}
+-- 주문 번호 (알림 그림용)
+local CALL_PET, REVIVE_PET, FEED_PET = 883, 982, 6991
 
 local LOGIN_GRACE = 5         -- 접속·지역 이동 직후 펫이 다시 나타나기를 기다리는 시간
 
@@ -46,11 +40,6 @@ local graceUntil = 0
 local lastState = {}
 local ticker              -- 알림 검사 타이머
 local shownText, shownWidth, shownHeight   -- 지금 화면에 그려 둔 글자·크기
-
-local function SpellName(id)
-	local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-	return name or FALLBACK_NAMES[id]
-end
 
 local function SpellIcon(id)
 	local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)
@@ -248,39 +237,6 @@ local function ResetPosition()
 end
 
 ---------------------------------------------------------------------------
--- 매크로 만들기
----------------------------------------------------------------------------
-local function PetMacroBody()
-	return ("#showtooltip\n/cast [@pet,dead][nopet,mod:ctrl] %s; [nopet] %s; [mod:shift] %s; %s"):format(
-		SpellName(REVIVE_PET), SpellName(CALL_PET), SpellName(DISMISS_PET), SpellName(MEND_PET))
-end
-
--- 캐릭터 전용 매크로를 만들거나 같은 이름이면 고친다. 펫 먹이 모듈도 쓴다.
-function ns.MakeCharacterMacro(name, body)
-	if InCombatLockdown() then
-		Print("전투 중에는 매크로를 만들 수 없어요.")
-		return
-	end
-	if not CreateMacro then
-		Print("이 게임 버전에서는 애드온이 매크로를 만들 수 없어요.")
-		return
-	end
-	local index = GetMacroIndexByName and GetMacroIndexByName(name) or 0
-	local ok, err
-	if index and index > 0 then
-		ok, err = pcall(EditMacro, index, name, MACRO_ICON, body)
-	else
-		ok, err = pcall(CreateMacro, name, MACRO_ICON, body, true)
-	end
-	if ok then
-		Print(("매크로 '%s'를 %s. 매크로 창(/macro)의 캐릭터 전용 탭에서 행동 단축바로 끌어다 놓으세요.")
-			:format(name, (index and index > 0) and "고쳤어요" or "만들었어요"))
-	else
-		Print("매크로를 만들지 못했어요. 캐릭터 전용 매크로 칸이 꽉 찼는지 확인하세요. " .. tostring(err or ""))
-	end
-end
-
----------------------------------------------------------------------------
 -- 이벤트
 ---------------------------------------------------------------------------
 ns:RegisterEvent("PLAYER_ENTERING_WORLD", function()
@@ -355,10 +311,11 @@ function M:BuildOptions(b)
 
 	b:Header("스마트 펫 매크로")
 	b:Text("한 키로 펫이 없으면 부르기, 죽었으면 되살리기, 살아 있으면 치료를 합니다. "
-		.. "Shift: 소환 해제 / Ctrl: 죽은 펫이 사라져서 부르기가 안 될 때 되살리기.\n"
-		.. "매크로는 게임에 저장되고 기본 단축키가 붙은 행동 단축바 칸에 두면 단축키 초기화 버그도 피할 수 있어요.")
+		.. "Shift: 먹이 주기 / Ctrl: 죽은 펫이 사라져서 부르기가 안 될 때 되살리기 / Alt: 소환 해제.\n"
+		.. "펫 대상 공격·징표·상 바꾸기 같은 다른 사냥꾼 매크로는 " .. ns:SettingsPath("ClassMacros") .. "에 있어요.")
 	b:Buttons{
-		{ text = "펫 매크로 만들기", width = 150, onClick = function() ns.MakeCharacterMacro(PET_MACRO, PetMacroBody()) end },
+		{ text = "펫 매크로 만들기", width = 150, onClick = function() ns.MakeClassMacro("pet") end },
+		{ text = "직업 매크로 보기", width = 150, onClick = function() ns.OpenClassMacros() end },
 	}
 	b:Text("먹이 키·화면 먹이 버튼·먹일 음식 등록은 " .. ns:SettingsPath("PetFeed") .. "에 있어요.", { color = { 0.6, 0.6, 0.6 } })
 end

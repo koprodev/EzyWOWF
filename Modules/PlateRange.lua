@@ -54,6 +54,7 @@ local LEVEL_GREY = { 0.6, 0.6, 0.6 }
 
 local db
 local spell             -- 지금 사거리를 묻는 주문. nil이면 쉰다
+local melee = false
 local units = {}        -- [이름표 유닛 토큰] = true
 local plateOf = {}      -- [토큰] = 이름표 (떨어질 땐 API가 nil을 줄 수 있어서 적어 둔다)
 local ufOf = {}         -- [이름표] = 마지막으로 칠한 유닛 프레임
@@ -83,17 +84,29 @@ end
 
 -- 바뀌었으면 true
 local function PickSpell()
-	local old = spell
-	spell = nil
+	local old, oldMelee = spell, melee
+	spell, melee = nil, false
 	if C_Spell and C_Spell.IsSpellInRange then
 		local _, class = UnitClass("player")
-		for _, id in ipairs(CLASS_SPELLS[class] or {}) do
+		local choices = CLASS_SPELLS[class] or {}
+		if class == "DRUID" then
+			local form = ns.DruidForms and ns.DruidForms.GetCurrent()
+			local kind = form and form.kind or "other"
+			if kind == "bear" then
+				choices, melee = { 6807 }, true
+			elseif kind == "cat" then
+				choices, melee = { 1082 }, true
+			elseif kind ~= "humanoid" and kind ~= "moonkin" then
+				choices = {}
+			end
+		end
+		for _, id in ipairs(choices) do
 			spell = KnownRank(id)
 			if spell then break end
 		end
-		spell = spell or WeaponSpell(class)
+		if class ~= "DRUID" then spell = spell or WeaponSpell(class) end
 	end
-	return spell ~= old
+	return spell ~= old or melee ~= oldMelee
 end
 
 -- 사거리 밖이면 true. 판정할 수 없으면(공격 못 하는 유닛, nil, 비밀값) 원래 모양으로 둔다.
@@ -101,7 +114,7 @@ local function IsFar(unit)
 	if not Clean(UnitCanAttack("player", unit)) then return false end
 	if Clean(C_Spell.IsSpellInRange(spell, unit)) ~= false then return false end
 	-- 너무 가까워 못 쏘는 거리. 공격할 수 있는 유닛에만 물어야 전투 중에 막히지 않는다
-	if not db.closeIsFar and CheckInteractDistance and Clean(CheckInteractDistance(unit, CLOSE_INDEX)) then return false end
+	if not melee and not db.closeIsFar and CheckInteractDistance and Clean(CheckInteractDistance(unit, CLOSE_INDEX)) then return false end
 	return true
 end
 
@@ -314,6 +327,8 @@ local function OnGearOrSpells()
 end
 ns:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", OnGearOrSpells)
 ns:RegisterEvent("SPELLS_CHANGED", OnGearOrSpells)
+ns:RegisterEvent("UPDATE_SHAPESHIFT_FORM", OnGearOrSpells)
+ns:RegisterEvent("UPDATE_SHAPESHIFT_FORMS", OnGearOrSpells)
 
 -- 적이 아군이 되는 등 공격 가능 여부가 바뀜 / 전투가 끝나 미뤄 둔 크기를 맞출 수 있음
 ns:RegisterEvent("UNIT_FACTION", function(_, unit)
@@ -366,7 +381,7 @@ local STYLES = {
 }
 
 local function SpellLabel()
-	if not spell then return "지금은 쉬는 중: 사거리를 잴 주문이 없습니다(공격 주문·원거리 무기 없음)." end
+	if not spell then return "지금은 쉬는 중: 현재 변신에서 사거리를 잴 주문이 없습니다(이동 변신·공격 주문·원거리 무기 없음)." end
 	local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spell)
 	local name = type(info) == "table" and Clean(info.name) or ("주문 " .. spell)
 	local range = type(info) == "table" and tonumber(Clean(info.maxRange))
@@ -374,7 +389,7 @@ local function SpellLabel()
 end
 
 function M:BuildOptions(b)
-	b:Text("원거리 공격 사거리 밖에 있는 적의 이름표를 무채색이나 작게 바꿉니다. 사거리 안으로 들어오면 원래 색·크기로 돌아옵니다.")
+	b:Text("공격 사거리 밖에 있는 적의 이름표를 무채색이나 작게 바꿉니다. 드루이드는 현재 변신에 맞춰 기준 주문을 바꾸며, 사거리 안으로 들어오면 원래 색·크기로 돌아옵니다.")
 	b:Check{ key = "enabled", label = "사용" }
 	b:Dropdown{ key = "style", label = "사거리 밖 표시", width = 200, depends = "enabled",
 		options = function() return STYLES end }
@@ -386,7 +401,8 @@ function M:BuildOptions(b)
 	b:Text(SpellLabel, { color = { 0.7, 0.7, 0.7 } })
 	b:Text("- 드루이드·사제·흑마법사·주술사·마법사는 기본 공격 주문(천벌·성스러운 일격·어둠의 화살·번개 화살·화염구), "
 		.. "사냥꾼은 자동 사격, 도적·전사는 장착한 원거리 무기(활·총·석궁·투척)의 사격 사거리로 판단합니다. 쓸 게 없으면 쉽니다.\n"
-		.. "- 곰·표범처럼 변신해서 그 주문을 못 쓸 때 게임이 사거리를 알려 주지 않으면 원래 모양으로 둡니다.\n"
+		.. "- 드루이드 곰은 후려치기, 표범은 할퀴기, 인간형·달빛야수는 천벌로 판단합니다. 이동·바다표범 등 다른 변신에서는 쉽니다. 판정할 수 없거나 주문을 모르면 원래 모양으로 둡니다.\n"
+		.. "- 곰·표범의 근접 사거리는 '너무 가까워 못 쏘는 거리' 옵션에 영향을 받지 않습니다.\n"
 		.. "- 무채색: 체력 막대와 레벨 숫자를 회색으로 바꿉니다. 이름과 그 밑 어그로 상자·내 상태 막대는 색을 그대로 둡니다.\n"
 		.. "- 작게: 이름표 아래 가운데를 기준으로 줄이고, 그 밑 어그로 상자·막대도 같이 줄입니다. 줄어든 만큼 누르기도 어려워집니다.\n"
 		.. "- 이름표가 켜져 있어야 보입니다(기본 단축키 V).",

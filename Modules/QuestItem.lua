@@ -1,5 +1,5 @@
 -- 퀘스트 아이템 단축키.
--- 가장 가까운 퀘스트의 아이템을 보안 버튼(EzyWOWFQuestItemButton)에 연결하고,
+-- 목표 창에서 고른 퀘스트(옵션을 끄면 가장 가까운 퀘스트)의 아이템을 보안 버튼(EzyWOWFQuestItemButton)에 연결하고,
 -- 그 버튼을 키 바인딩(CLICK)으로 누르는 방식이다.
 
 local _, ns = ...
@@ -30,7 +30,7 @@ local M = ns:NewModule("QuestItem", {
 		enabled = true,
 		showButton = true,
 		scale = 1,
-		focusedOnly = false,   -- 집중 추적(화살표가 가리키는) 퀘스트 하나만
+		selectedOnly = true,   -- 목표 창에서 고른(집중 추적) 퀘스트 하나만. 끄면 가까운 퀘스트 자동
 		resetOnZone = true,
 		point = DEFAULT_POS.point, relPoint = DEFAULT_POS.relPoint, x = DEFAULT_POS.x, y = DEFAULT_POS.y,
 	},
@@ -71,7 +71,7 @@ local function IsWatched(questID)
 	return C_QuestLog.GetQuestWatchType and C_QuestLog.GetQuestWatchType(questID) ~= nil or false
 end
 
--- 지금 집중 추적 중인 퀘스트. 없거나 퀘스트가 아닌 것(지도 핀 등)을 쫓는 중이면 nil
+-- 목표 창에서 고른(아이콘이 노란, 집중 추적) 퀘스트. 없거나 퀘스트가 아닌 것(지도 핀 등)을 쫓는 중이면 nil
 local function FocusedQuestID()
 	local id = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and Clean(C_SuperTrack.GetSuperTrackedQuestID())
 	if type(id) == "number" and id > 0 then return id end
@@ -90,8 +90,8 @@ local function CollectCandidates()
 	local list = {}
 	if not GetSpecialItemInfo then return list end
 	-- 포에버는 받은 퀘스트를 전부 추적기에 올리니(autoQuestWatch) "추적 중"은 집중 추적 하나로 본다
-	local focusID = db.focusedOnly and FocusedQuestID()
-	if db.focusedOnly and not focusID then return list end
+	local focusID = db.selectedOnly and FocusedQuestID()
+	if db.selectedOnly and not focusID then return list end
 
 	for index = 1, C_QuestLog.GetNumQuestLogEntries() do
 		local info = C_QuestLog.GetInfo(index)
@@ -368,11 +368,11 @@ local function RequestUpdate()
 	C_Timer.After(0.1, RunQueuedUpdate)
 end
 
--- 후보가 없을 때 채팅 안내. 집중 추적 모드면 무엇이 빠졌는지 알려 준다
+-- 후보가 없을 때 채팅 안내. 고른 퀘스트만 쓰는 모드면 무엇이 빠졌는지 알려 준다
 local function NoItemText()
-	if db.focusedOnly then
-		if FocusedQuestID() then return "집중 추적 중인 퀘스트에는 쓸 아이템이 없습니다." end
-		return "집중 추적 중인 퀘스트가 없습니다. 퀘스트 추적기에서 퀘스트를 오른쪽 클릭해 집중 추적을 고르세요."
+	if db.selectedOnly then
+		if FocusedQuestID() then return "고른 퀘스트에는 쓸 아이템이 없습니다." end
+		return "고른 퀘스트가 없습니다. 목표 창에서 퀘스트 아이콘을 클릭해 고르세요. (오른쪽 클릭 > 집중도 같음)"
 	end
 	return "사용할 수 있는 퀘스트 아이템이 없습니다."
 end
@@ -419,7 +419,7 @@ local function ResetToAuto()
 	end
 	manualItemID = nil
 	Evaluate()
-	Print("자동 선택(가까운 퀘스트 우선)으로 돌아갑니다.")
+	Print(db.selectedOnly and "자동 선택(목표 창에서 고른 퀘스트)으로 돌아갑니다." or "자동 선택(가까운 퀘스트 우선)으로 돌아갑니다.")
 end
 
 local function PrintList()
@@ -609,11 +609,8 @@ end
 ---------------------------------------------------------------------------
 function M:OnInitialize()
 	db = self.db
-	-- 0.4.1: "추적기에 있는 퀘스트만"이 포에버에선 사실상 전부라 "집중 추적 퀘스트만"으로 바꿨다. 켜 두었던 값은 이어받는다
-	if db.watchedOnly ~= nil then
-		db.focusedOnly = db.watchedOnly
-		db.watchedOnly = nil
-	end
+	-- 옛 키는 "고른 퀘스트만"이 기본 꺼짐이던 시절 값이라 버리고 새 기본(켜짐)으로 출발
+	db.watchedOnly, db.focusedOnly = nil, nil
 	ApplyPosition()
 	UpdateLayout()
 end
@@ -637,7 +634,7 @@ function M:ApplySettings(changes)
 		manualItemID = nil
 		if moveMode then SetMoveMode(false) end
 	end
-	if changes.resetOnZone ~= nil or changes.focusedOnly ~= nil then
+	if changes.resetOnZone ~= nil or changes.selectedOnly ~= nil then
 		manualItemID = nil
 	end
 	ApplyPosition()
@@ -663,7 +660,8 @@ function M:BuildOptions(b)
 
 	b:Header("퀘스트 아이템 단축키")
 	b:Text("퀘스트 추적기 옆에 뜨는 퀘스트 아이템을 단축키로 사용합니다. "
-		.. "아이템이 여러 개면 가장 가까운 퀘스트의 것을 자동으로 고르고, 화면 버튼을 우클릭하거나 전환 키로 바꿀 수 있습니다.")
+		.. "목표 창에서 고른 퀘스트의 아이템만 띄우고, 고른 퀘스트가 없으면 버튼을 숨깁니다. "
+		.. "아래 [선택 방식]에서 끄면 가장 가까운 퀘스트의 것을 자동으로 고르고, 화면 버튼을 우클릭하거나 전환 키로 바꿀 수 있습니다.")
 	b:Check{ key = "enabled", label = "기능 사용" }
 	b:Text(CurrentItemText, { font = "GameFontHighlight" })
 
@@ -693,10 +691,11 @@ function M:BuildOptions(b)
 
 	b:Header("선택 방식")
 	b:Check{
-		key = "focusedOnly",
-		label = "집중 추적 중인 퀘스트의 아이템만 사용",
-		tooltip = "퀘스트 추적기에서 퀘스트를 오른쪽 클릭해 집중 추적으로 고른 퀘스트(퀘스트 방향 화살표가 가리키는 퀘스트) 하나의 아이템만 띄웁니다.\n"
-			.. "그 퀘스트에 아이템이 없거나 집중 추적 중인 퀘스트가 없으면 버튼을 숨깁니다.",
+		key = "selectedOnly",
+		label = "목표 창에서 고른 퀘스트의 아이템만 사용",
+		tooltip = "목표 창에서 퀘스트 아이콘을 클릭해 노랗게 고른 퀘스트(오른쪽 클릭 > 집중과 같음, 퀘스트 방향 화살표가 가리키는 퀘스트) 하나의 아이템만 띄웁니다.\n"
+			.. "고른 퀘스트가 없거나 그 퀘스트에 아이템이 없으면 버튼을 숨깁니다. 노란 아이콘을 다시 클릭하면 선택이 풀립니다.\n"
+			.. "끄면 가장 가까운 퀘스트의 아이템을 자동으로 고릅니다.",
 		depends = "enabled",
 	}
 	b:Check{

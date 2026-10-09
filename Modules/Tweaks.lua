@@ -2,39 +2,20 @@
 -- 항목마다 [켜기]/[끄기] 버튼과 현재 상태를 보여 주고, [저장] 없이 바로 적용된다. (게임 설정이라 EzyWOWF 설정 저장과 상관없다)
 -- 게임이 막아 둔 설정은 바꿔도 값이 그대로라서, 바꾼 뒤 다시 읽어 보고 안 바뀌었으면 알린다.
 -- 이 게임 버전에 없는 설정은 회색으로 막아 둔다.
---
--- 낚시: 상호작용 키는 기본 10m 안만 잡아서 멀리 떨어진 찌를 못 잡는다.
---   거리(SoftTargetInteractRange)를 30m, 방향(SoftTargetInteractArc)을 전방향(2)으로 넓힌다.
---   "낚시할 때만"을 켜 두면 낚시 채널링이 시작될 때 넓혔다가 끝나면 원래 값으로 되돌린다.
 
 local _, ns = ...
-local Clean, Print = ns.Clean, ns.Print
+local Print = ns.Print
 
 local M = ns:NewModule("Tweaks", {
 	title = "빠른 설정",
 	category = "interface",
 	icon = "Interface\\Icons\\INV_Misc_Gear_08",
 	order = 10,
-	defaults = {
-		fishingAuto = true,
-	},
+	defaults = {},
 })
-
-local FISHING_SPELLS = { 7620, 131474 }
-local FISHING_RANGE = { SoftTargetInteractRange = 30, SoftTargetInteractArc = 2 }
 
 -- on: 켤 때 값. off: 끌 때 값(없으면 게임 기본값).
 local TOGGLES = {
-	{
-		group = "낚시", label = "상호작용 키로 먼 낚시찌 잡기 - 항상 (30m, 전방향)", on = FISHING_RANGE,
-		tip = "상호작용 키가 30m 안, 모든 방향의 대상을 잡습니다. 평소에도 멀리 있는 NPC나 물건을 잡을 수 있으니 "
-			.. "보통은 아래의 '낚시할 때만'을 추천해요.",
-	},
-	{
-		group = "낚시", label = "상호작용 대상 위에 아이콘 표시 (낚시찌 포함)",
-		on = { SoftTargetIconGameObject = 1 }, off = { SoftTargetIconGameObject = 0 },
-		tip = "상호작용 키로 잡을 수 있는 물건(낚시찌, 채집물 등) 위에 손 모양 아이콘을 띄웁니다.",
-	},
 	{
 		group = "카메라·화면", label = "카메라를 더 멀리 (최대 거리 2.6배)", on = { cameraDistanceMaxZoomFactor = 2.6 },
 		tip = "마우스 휠로 카메라를 기본보다 더 멀리 뺄 수 있습니다.",
@@ -127,47 +108,6 @@ local function Apply(item, on)
 end
 
 ---------------------------------------------------------------------------
--- 낚시할 때만 상호작용 범위 넓히기
----------------------------------------------------------------------------
-local fishingNames = {}
-for _, id in ipairs(FISHING_SPELLS) do
-	local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-	if name then fishingNames[name] = true end
-end
-
-local function IsFishing(spellID)
-	spellID = Clean(spellID)
-	if not spellID then return false end
-	for _, id in ipairs(FISHING_SPELLS) do
-		if id == spellID then return true end
-	end
-	local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
-	return name ~= nil and fishingNames[name] == true
-end
-
-local savedRange   -- 낚시하는 동안 넓혀 두었으면 원래 값
-
-ns:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", function(_, unit, _, spellID)
-	if unit ~= "player" or savedRange or not (M.db and M.db.fishingAuto) then return end
-	if not IsFishing(spellID) or not AllExist(FISHING_RANGE) then return end
-	local original, changed = {}, false
-	for name, value in pairs(FISHING_RANGE) do
-		original[name] = Get(name)
-		if not Same(original[name], value) then
-			Set(name, value)
-			changed = true
-		end
-	end
-	if changed then savedRange = original end
-end, "player")
-
-ns:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", function(_, unit)
-	if unit ~= "player" or not savedRange then return end
-	for name, value in pairs(savedRange) do Set(name, value) end
-	savedRange = nil
-end, "player")
-
----------------------------------------------------------------------------
 -- 설정 창
 ---------------------------------------------------------------------------
 function M:BuildOptions(b)
@@ -193,15 +133,6 @@ function M:BuildOptions(b)
 			onOff = function() Apply(item, false) end,
 			disabled = function() return not exists end,
 		}
-		if item.on == FISHING_RANGE then
-			b:OnOff{
-				label = "낚시할 때만 자동으로 넓히기 (추천)",
-				tooltip = "낚시를 시작하면 상호작용 범위를 30m·전방향으로 넓혔다가 낚시가 끝나면 원래대로 되돌립니다.",
-				isOn = function() return M.db.fishingAuto end,
-				onOn = function() M.db.fishingAuto = true end,
-				onOff = function() M.db.fishingAuto = false end,
-			}
-		end
 	end
 
 	for _, item in ipairs(SLIDERS) do

@@ -457,10 +457,7 @@ end)
 -- 내 위치와 기록 위치의 차이를 야드로 바꾸고, 미니맵 반지름에 대한 비율로 픽셀 위치를 구한다.
 -- 미니맵 회전 설정이면 캐릭터가 보는 방향이 위로 가도록 돌린다. 지도 밖은 숨긴다(둥근 지도는 원, 네모는 사각형).
 ---------------------------------------------------------------------------
-local MINIMAP_DIAMETER = {
-	indoor  = { [0] = 300, 240, 180, 120, 80, 50 },
-	outdoor = { [0] = 466 + 2 / 3, 400, 333 + 1 / 3, 266 + 2 / 3, 200, 133 + 1 / 3 },
-}
+local MINIMAP_DIAMETER = ns.MinimapProjection.Diameters
 local MINIMAP_INTERVAL = 0.1
 
 local minimapPins = {}
@@ -533,15 +530,8 @@ local function UpdateMinimapPins()
 		if info and db[info.mapKey] then
 			local dx = (node.x - px) * w       -- 동쪽이 +
 			local dn = (py - node.y) * h       -- 북쪽이 +
-			local sx = (dx * cosF + dn * sinF) * scale
-			local sy = (-dx * sinF + dn * cosF) * scale
-			local inside
-			if square then
-				inside = math.abs(sx) <= limit and math.abs(sy) <= limit
-			else
-				inside = sx * sx + sy * sy <= limit * limit
-			end
-			if inside then
+			local sx, sy = ns.MinimapProjection.Project(dx, dn, cosF, sinF, scale, limit, square)
+			if sx then
 				shown = shown + 1
 				local pin = MinimapPin(shown)
 				pin.node = node   -- 툴팁이 읽으니 모양이 같아도 매번 바꿔 끼운다

@@ -24,23 +24,26 @@ ns.UI = UI
 
 -- 색·테두리는 전부 여기서 고른다. 색은 {r, g, b[, a]}, 쓸 때는 UI.Color*로 풀어서 넘긴다.
 local Theme = {
-	accent    = { 0.2, 0.8, 1 },          -- #33ccff, 채팅의 [EzyWOWF] 접두어와 같은 색
-	bg        = { 0.05, 0.05, 0.07, 0.96 },
-	titleBg   = { 0.10, 0.10, 0.13, 1 },
-	border    = { 0.28, 0.28, 0.33, 1 },
-	panel     = { 1, 1, 1, 0.035 },
-	line      = { 1, 1, 1, 0.08 },
-	hover     = { 1, 1, 1, 0.07 },
-	selected  = { 0.2, 0.8, 1, 0.16 },
-	header    = { 1, 0.82, 0 },
+	accent    = { 1, 0.82, 0 },
+	bg        = { 0.07, 0.08, 0.09, 0.96 },
+	settingsBg    = { 0.07, 0.08, 0.09, 0.78 },
+	settingsInset = { 0.045, 0.04, 0.025, 0.08 },
+	settingsInput = { 0.045, 0.04, 0.025, 0.6 },
+	titleBg   = { 0.10, 0.075, 0.035, 0.95 },
+	border    = { 0.42, 0.32, 0.16, 1 },
+	panel     = { 0.08, 0.06, 0.03, 0.28 },
+	line      = { 0.72, 0.56, 0.25, 0.24 },
+	hover     = { 1, 0.82, 0, 0.10 },
+	selected  = { 1, 0.82, 0, 0.15 },
+	header    = { 1, 1, 1 },
 	pending   = { 1, 0.6, 0.2 },
 	disabled  = { 0.5, 0.5, 0.5 },
-	normal    = { 1, 1, 1 },
-	muted     = { 0.6, 0.6, 0.6 },
+	normal    = { 1, 0.82, 0 },
+	muted     = { 0.65, 0.62, 0.55 },
 	switchOff = { 0.30, 0.30, 0.34 },
 	knob      = { 0.96, 0.96, 0.96 },
-	track     = { 1, 1, 1, 0.05 },
-	thumb     = { 1, 1, 1, 0.3 },
+	track     = { 0.3, 0.24, 0.12, 0.3 },
+	thumb     = { 0.72, 0.56, 0.25, 0.9 },
 }
 UI.Theme = Theme
 
@@ -62,8 +65,113 @@ function UI.ApplyPanelBackdrop(frame, bg, border)
 	frame:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
 end
 
+local atlasInfoCache = {}
+local nativeErrors = {}
+
+local function ReportNativeError(owner, field, err)
+	local message = tostring(err)
+	owner[field] = message
+	if not nativeErrors[message] then
+		nativeErrors[message] = true
+		if type(ns.ErrorHandler) == "function" then ns.ErrorHandler(message) end
+	end
+end
+
+function UI.SetAtlas(texture, atlas, fallbackPath)
+	if type(atlas) ~= "string" or atlas == "" then
+		texture:SetTexture(fallbackPath)
+		return false
+	end
+	local info = atlasInfoCache[atlas]
+	if info == nil then
+		if C_Texture and type(C_Texture.GetAtlasInfo) == "function" then
+			local ok, result = pcall(C_Texture.GetAtlasInfo, atlas)
+			if ok then info = result else ReportNativeError(texture, "settingsAtlasError", result) end
+		end
+		info = type(info) == "table" and info or false
+		atlasInfoCache[atlas] = info
+	end
+	if info and type(texture.SetAtlas) == "function" then
+		local ok, err = pcall(texture.SetAtlas, texture, atlas)
+		if ok then return true end
+		ReportNativeError(texture, "settingsAtlasError", err)
+		atlasInfoCache[atlas] = false
+	end
+	texture:SetTexture(fallbackPath)
+	return false
+end
+
+local function ApplySettingsBorder(frame, layout)
+	if not (NineSliceUtil and type(NineSliceUtil.ApplyLayoutByName) == "function") then return false end
+	local nine = frame.NineSlice
+	if not nine then
+		if type(CreateFrame) ~= "function" then return false end
+		local ok, created = pcall(CreateFrame, "Frame", nil, frame, "NineSlicePanelTemplate")
+		if not ok then
+			ReportNativeError(frame, "settingsBorderError", created)
+			return false
+		end
+		if not created then return false end
+		nine = created
+		frame.NineSlice = nine
+	end
+	nine:SetAllPoints(frame)
+	local level = frame:GetFrameLevel()
+	if type(level) == "number" then nine:SetFrameLevel(level) end
+	nine:EnableMouse(false)
+	local ok, err = pcall(NineSliceUtil.ApplyLayoutByName, nine, layout)
+	if not ok then
+		nine:Hide()
+		ReportNativeError(frame, "settingsBorderError", err)
+		return false
+	end
+	frame:SetBackdropBorderColor(0, 0, 0, 0)
+	nine:Show()
+	return true
+end
+
+function UI.ApplySettingsFrame(frame)
+	UI.ApplyPanelBackdrop(frame, Theme.settingsBg)
+	return ApplySettingsBorder(frame, "ButtonFrameTemplateNoPortrait")
+end
+
+function UI.ApplySettingsInset(frame, bg)
+	UI.ApplyPanelBackdrop(frame, bg or Theme.settingsInput, Theme.border)
+	return ApplySettingsBorder(frame, "InsetFrameTemplate")
+end
+
+function UI.ApplyTabArt(button)
+	if button.settingsTabArt then return end
+	local left = button:CreateTexture(nil, "BACKGROUND")
+	left:SetWidth(16)
+	left:SetPoint("TOPLEFT")
+	left:SetPoint("BOTTOMLEFT")
+	local right = button:CreateTexture(nil, "BACKGROUND")
+	right:SetWidth(16)
+	right:SetPoint("TOPRIGHT")
+	right:SetPoint("BOTTOMRIGHT")
+	local middle = button:CreateTexture(nil, "BACKGROUND")
+	middle:SetPoint("TOPLEFT", left, "TOPRIGHT")
+	middle:SetPoint("BOTTOMRIGHT", right, "BOTTOMLEFT")
+	button.settingsTabArt = { left, middle, right }
+	function button:PaintTab(selected)
+		local prefix = selected and "uiframe-activetab-" or "uiframe-tab-"
+		local center = selected and "_uiframe-activetab-center" or "_uiframe-tab-center"
+		for i, atlas in ipairs({ prefix .. "left", center, prefix .. "right" }) do
+			local texture = self.settingsTabArt[i]
+			if not UI.SetAtlas(texture, atlas) then UI.ColorTexture(texture, selected and Theme.selected or Theme.panel) end
+		end
+	end
+	button:PaintTab(false)
+end
+
 local PADDING = 16
 local ROW_GAP = 8
+local CONTROL_COLUMN = 264
+
+local function ControlOffset(width, indent)
+	return math.max(36, math.min(CONTROL_COLUMN - (indent or 0), width - 34))
+end
 local PENDING_COLOR = Theme.pending
 local DISABLED_COLOR = Theme.disabled
 local NORMAL_COLOR = Theme.normal
@@ -99,13 +207,94 @@ local Builder = {}
 Builder.__index = Builder
 
 function UI.NewBuilder(page, module, width)
-	return setmetatable({ page = page, module = module, width = width, y = -PADDING, controls = {} }, Builder)
+	return setmetatable({ page = page, module = module, width = width, y = -PADDING, controls = {}, searchEntries = {} }, Builder)
 end
 
 function Builder:Place(region, height, indent, gap)
+	-- Keep page-relative offsets available while the page is hidden.
+	region.settingsY = -self.y
+	region.settingsHeight = height
 	region:SetPoint("TOPLEFT", self.page, "TOPLEFT", PADDING + (indent or 0), self.y)
 	self.y = self.y - height - (gap or ROW_GAP)
 	return region
+end
+
+function Builder:SearchEntry(region, label, text, keywords, y, height)
+	local entry = {
+		label = label or self.section or self.module.title,
+		text = text or "",
+		section = self.section,
+		sectionY = self.sectionY,
+		index = #self.searchEntries + 1,
+		sectionIndex = self.sectionIndex,
+		indexOnly = self.searchOnly or nil,
+		y = y or (region and region.settingsY) or 0,
+		height = height or (region and region.settingsHeight) or 1,
+		region = region,
+		keywords = keywords,
+	}
+	self.searchEntries[#self.searchEntries + 1] = entry
+	return entry
+end
+
+local function DropdownKeywords(opts)
+	return function()
+		local texts = {}
+		for _, option in ipairs(opts.options() or {}) do texts[#texts + 1] = option.text or "" end
+		return table.concat(texts, "\n")
+	end
+end
+
+-- Reuse option declarations without creating frames or evaluating live status text.
+local SearchBuilder = {}
+SearchBuilder.__index = SearchBuilder
+SearchBuilder.SearchEntry = Builder.SearchEntry
+
+function UI.NewSearchBuilder(module, width)
+	return setmetatable({ module = module, width = width, searchOnly = true, searchEntries = {} }, SearchBuilder)
+end
+
+function SearchBuilder:Header(text)
+	self.section = text
+	local entry = self:SearchEntry(nil, text)
+	self.sectionIndex = entry.index
+	entry.sectionIndex = entry.index
+	entry.type = "section"
+	return entry
+end
+
+function SearchBuilder:Text(text)
+	if type(text) == "string" then
+		local entry = self:SearchEntry(nil, self.section or self.module.title, text)
+		entry.type = "description"
+		return entry
+	end
+end
+
+function SearchBuilder:Option(opts)
+	return self:SearchEntry(nil, opts.label, opts.tooltip)
+end
+SearchBuilder.Check = SearchBuilder.Option
+SearchBuilder.Slider = SearchBuilder.Option
+SearchBuilder.OnOff = SearchBuilder.Option
+
+function SearchBuilder:KeyBind(opts)
+	return self:SearchEntry(nil, opts.label, opts.tooltip or "단축키")
+end
+
+function SearchBuilder:CheckGrid(opts)
+	for _, item in ipairs(opts.items) do
+		local text = table.concat({ opts.label or "", item.text or "", item.tooltip or "" }, "\n")
+		self:SearchEntry(nil, item.title or item.text or opts.label, text)
+	end
+end
+
+function SearchBuilder:Buttons(list)
+	for _, def in ipairs(list) do self:SearchEntry(nil, def.text, def.tooltip, def.textFunc) end
+end
+
+function SearchBuilder:Dropdown(opts)
+	return self:SearchEntry(nil, opts.label, opts.tooltip, DropdownKeywords(opts))
 end
 
 function Builder:Track(control)
@@ -155,11 +344,17 @@ end
 ---------------------------------------------------------------------------
 -- 페이지 제목은 창 위쪽 배너가 맡고, 여기 제목은 페이지 안의 소제목이다.
 function Builder:Header(text)
+	self.section = text
 	if self.y < -PADDING then self.y = self.y - 10 end
 	local fs = self.page:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	fs:SetText(text)
 	UI.ColorText(fs, Theme.header)
 	self:Place(fs, math.max(fs:GetStringHeight() or 0, 16), 0, 4)
+	self.sectionY = fs.settingsY
+	local entry = self:SearchEntry(fs, text)
+	self.sectionIndex = entry.index
+	entry.sectionIndex = entry.index
+	entry.type = "section"
 
 	local line = self.page:CreateTexture(nil, "ARTWORK")
 	UI.ColorTexture(line, Theme.accent, 0.3)
@@ -184,77 +379,102 @@ function Builder:Text(text, opts)
 		fs:SetText(text)
 	end
 	self:Place(fs, math.max(fs:GetStringHeight() or 0, 14), opts.indent)
+	if type(text) == "string" then
+		self:SearchEntry(fs, self.section or self.module.title, text).type = "description"
+	end
 	return fs
 end
 
 ---------------------------------------------------------------------------
 -- 켜짐/꺼짐 스위치 (CheckButton 기반. 값은 [저장]을 눌러야 반영)
 ---------------------------------------------------------------------------
-local SWITCH_W, SWITCH_H, KNOB = 30, 14, 12
-local KNOB_MASK = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
+local CHECKBOX_FILES = {
+	normal = "Interface\\Buttons\\UI-CheckBox-Up",
+	pushed = "Interface\\Buttons\\UI-CheckBox-Down",
+	highlight = "Interface\\Buttons\\UI-CheckBox-Highlight",
+	checked = "Interface\\Buttons\\UI-CheckBox-Check",
+	disabled = "Interface\\Buttons\\UI-CheckBox-Check-Disabled",
+}
+
+local function SetCheckboxArt(texture, state)
+	local atlas = state == "disabled" and "checkmark-minimal-disabled" or (state == "checked" and "checkmark-minimal" or "checkbox-minimal")
+	UI.SetAtlas(texture, atlas, CHECKBOX_FILES[state])
+end
 
 function Builder:Check(opts)
 	local b = self
+	local width = b.width - PADDING * 2 - (opts.indent or 0)
+	local column = ControlOffset(width, opts.indent)
 	local sw = CreateFrame("CheckButton", nil, b.page)
-	sw:SetSize(36, 26)   -- 스위치는 14px이지만 줄은 26px(+간격 2)로 잡아 누르기 편하게
+	sw.settingsControlX = column
+	sw:SetHitRectInsets(0, 0, 0, 0)
 
-	local track = sw:CreateTexture(nil, "BACKGROUND")
-	track:SetSize(SWITCH_W, SWITCH_H)
-	track:SetPoint("LEFT", 2, 0)
-
-	local knob = sw:CreateTexture(nil, "ARTWORK")
-	knob:SetSize(KNOB, KNOB)
-	local mask = sw:CreateMaskTexture()
-	mask:SetAllPoints(knob)
-	mask:SetTexture(KNOB_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-	knob:AddMaskTexture(mask)
-
-	local hover = sw:CreateTexture(nil, "HIGHLIGHT")
-	hover:SetAllPoints(track)
-	UI.ColorTexture(hover, Theme.hover)
-
-	local label = sw:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-	label:SetPoint("LEFT", sw, "RIGHT", 4, 1)
+	local label = sw:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	label:SetPoint("LEFT", 4, 0)
+	label:SetWidth(math.max(24, column - 16))
+	label:SetJustifyH("LEFT")
+	label:SetWordWrap(true)
 	label:SetText(opts.label)
-	sw:SetHitRectInsets(0, -(label:GetStringWidth() + 8), 0, 0)   -- 글자를 눌러도 켜지고 꺼진다
+	sw.settingsLabel = label
 
-	local function Paint(on, enabled)
-		UI.ColorTexture(track, on and Theme.accent or Theme.switchOff, enabled and 1 or 0.35)
-		UI.ColorTexture(knob, Theme.knob, enabled and 1 or 0.5)
-		knob:ClearAllPoints()
-		if on then
-			knob:SetPoint("RIGHT", track, "RIGHT", -1, 0)
-		else
-			knob:SetPoint("LEFT", track, "LEFT", 1, 0)
+	local normal = sw:CreateTexture(nil, "BACKGROUND")
+	local pushed = sw:CreateTexture(nil, "BACKGROUND")
+	local highlight = sw:CreateTexture(nil, "HIGHLIGHT")
+	local checked = sw:CreateTexture(nil, "ARTWORK")
+	local disabled = sw:CreateTexture(nil, "ARTWORK")
+	SetCheckboxArt(normal, "normal")
+	SetCheckboxArt(pushed, "pushed")
+	SetCheckboxArt(highlight, "highlight")
+	SetCheckboxArt(checked, "checked")
+	SetCheckboxArt(disabled, "disabled")
+	highlight:SetBlendMode("ADD")
+	sw:SetNormalTexture(normal)
+	sw:SetPushedTexture(pushed)
+	sw:SetHighlightTexture(highlight)
+	sw:SetCheckedTexture(checked)
+	sw:SetDisabledCheckedTexture(disabled)
+	for _, texture in ipairs({ normal, pushed, highlight, checked, disabled }) do
+		texture:ClearAllPoints()
+		texture:SetSize(30, 29)
+		texture:SetPoint("LEFT", sw, "LEFT", column, 0)
+	end
+	sw.settingsNormal, sw.settingsChecked, sw.settingsDisabledChecked = normal, checked, disabled
+
+	local function Paint(enabled, pending)
+		for _, texture in ipairs({ normal, pushed, highlight, checked }) do
+			texture:SetDesaturated(not enabled)
+			texture:SetAlpha(enabled and 1 or 0.4)
 		end
+		normal:SetVertexColor(unpack(pending and enabled and PENDING_COLOR or { 1, 1, 1 }))
+		label:SetTextColor(unpack(b:LabelColor(opts, pending)))
 	end
 
 	sw:SetScript("OnClick", function(self)
 		local on = self:GetChecked() and true or false
-		Paint(on, true)
 		PlayClick(on)
 		b:Set(opts, on)
+		Paint(true, opts.key and ns:IsPending(b.module, opts.key))
 	end)
 	AttachTooltip(sw, opts.label, opts.tooltip)
 
 	function sw:Refresh()
-		local on = b:Get(opts) and true or false
-		self:SetChecked(on)
+		self:SetChecked(b:Get(opts) and true or false)
 		local enabled = not b:IsDisabled(opts)
 		self:SetEnabled(enabled)
-		Paint(on, enabled)
-		label:SetTextColor(unpack(b:LabelColor(opts, opts.key and ns:IsPending(b.module, opts.key))))
+		Paint(enabled, opts.key and ns:IsPending(b.module, opts.key))
 	end
 
-	b:Place(sw, 26, opts.indent, 2)
+	local height = math.max((label:GetStringHeight() or 0) + 4, 29)
+	sw:SetSize(width, height)
+	b:Place(sw, height, opts.indent, 4)
+	b:SearchEntry(sw, opts.label, opts.tooltip)
 	return b:Track(sw)
 end
 
 ---------------------------------------------------------------------------
 -- 체크박스 격자 (항목마다 켜짐/꺼짐 하나. 값은 [저장]을 눌러야 반영)
 ---------------------------------------------------------------------------
-local BOX, ICON = 14, 16
-local CHECK_MARK = "Interface\\Buttons\\UI-CheckBox-Check"
+local BOX, ICON = 18, 16
 
 local function ShowCellTooltip(cell)
 	GameTooltip:SetOwner(cell, "ANCHOR_RIGHT")
@@ -287,14 +507,15 @@ function Builder:CheckGrid(opts)
 		local box = cell:CreateTexture(nil, "BACKGROUND")   -- 테두리 겸 바탕
 		box:SetSize(BOX, BOX)
 		box:SetPoint("LEFT", 4, 0)
+		SetCheckboxArt(box, "normal")
 		local fill = cell:CreateTexture(nil, "BORDER")
 		fill:SetPoint("TOPLEFT", box, "TOPLEFT", 1, -1)
 		fill:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -1, 1)
+		fill:SetAlpha(0)
 		local mark = cell:CreateTexture(nil, "ARTWORK")
 		mark:SetSize(BOX + 6, BOX + 6)   -- 체크 그림은 가장자리가 비어 있어서 상자보다 살짝 크게
 		mark:SetPoint("CENTER", box, "CENTER", 1, 0)
-		mark:SetTexture(CHECK_MARK)
-		mark:SetDesaturated(true)
+		SetCheckboxArt(mark, "checked")
 		local hover = cell:CreateTexture(nil, "HIGHLIGHT")
 		hover:SetAllPoints(box)
 		UI.ColorTexture(hover, Theme.hover)
@@ -321,16 +542,14 @@ function Builder:CheckGrid(opts)
 		cell:SetHitRectInsets(0, math.max(0, cellW - right - 4), 0, 0)
 
 		local itemOpts = { key = item.key, depends = opts.depends, disabled = opts.disabled }
-		-- 저장 대기는 주황 테두리(2px)로도 보인다. 글자 없는 아이콘 칸도 티가 나야 하니까.
+		-- Tint the native border so icon-only cells also show pending changes.
 		local function Paint(on, enabled, pending)
 			local alpha = enabled and 1 or 0.35
 			local ring = pending and enabled
-			UI.ColorTexture(box, ring and PENDING_COLOR or (on and Theme.accent or Theme.border), alpha)
-			local inset = ring and 2 or 1
-			fill:ClearAllPoints()
-			fill:SetPoint("TOPLEFT", box, "TOPLEFT", inset, -inset)
-			fill:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -inset, inset)
-			UI.ColorTexture(fill, on and Theme.accent or Theme.bg, on and alpha or nil)
+			box:SetVertexColor(unpack(ring and PENDING_COLOR or { 1, 1, 1 }))
+			box:SetDesaturated(not enabled)
+			box:SetAlpha(alpha)
+			SetCheckboxArt(mark, enabled and "checked" or "disabled")
 			mark:SetVertexColor(1, 1, 1, alpha)
 			mark:SetShown(on)
 			if icon then
@@ -379,6 +598,12 @@ function Builder:CheckGrid(opts)
 	local height = top + math.ceil(#cells / columns) * rowH
 	grid:SetSize(width, height)
 	b:Place(grid, height, opts.indent, ROW_GAP)
+	for i, cell in ipairs(cells) do
+		local item = opts.items[i]
+		local y = grid.settingsY + top + math.floor((i - 1) / columns) * rowH
+		local text = table.concat({ opts.label or "", item.text or "", item.tooltip or "" }, "\n")
+		b:SearchEntry(cell, item.title or item.text or opts.label, text, nil, y, rowH)
+	end
 	return b:Track(grid)
 end
 
@@ -389,26 +614,54 @@ function Builder:Slider(opts)
 	local b = self
 	local fmt = opts.format or "%s"
 	local step = opts.step or 1
-
+	local width = b.width - PADDING * 2 - (opts.indent or 0)
+	local column = ControlOffset(width, opts.indent)
 	local holder = CreateFrame("Frame", nil, b.page)
-	holder:SetSize(300, 48)
 
-	local label = holder:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-	label:SetPoint("TOPLEFT", 4, 0)
+	local label = holder:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+	label:SetPoint("LEFT", 4, 0)
+	label:SetWidth(math.max(24, column - 16))
+	label:SetJustifyH("LEFT")
+	label:SetWordWrap(true)
 	label:SetText(opts.label)
+	holder.settingsLabel = label
 
 	local valueText = holder:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-	valueText:SetPoint("LEFT", label, "RIGHT", 8, 0)
+	valueText:SetPoint("RIGHT", -2, 5)
+	valueText:SetWidth(64)
+	valueText:SetJustifyH("RIGHT")
 
 	local slider = CreateFrame("Slider", nil, holder, "BackdropTemplate")
 	slider:SetOrientation("HORIZONTAL")
-	slider:SetSize(240, 17)
-	slider:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -6)
+	slider:SetSize(math.max(80, math.min(240, width - column - 76)), 19)
+	slider:SetPoint("LEFT", holder, "LEFT", column, 5)
+	slider:SetHitRectInsets(0, 0, -6, -6)
 	slider:SetBackdrop(SLIDER_BACKDROP)
-	slider:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
 	slider:SetMinMaxValues(opts.min, opts.max)
 	slider:SetValueStep(step)
 	slider:SetObeyStepOnDrag(true)
+	holder.settingsSlider = slider
+
+	local left = slider:CreateTexture(nil, "BACKGROUND")
+	left:SetSize(12, 19)
+	left:SetPoint("LEFT")
+	local right = slider:CreateTexture(nil, "BACKGROUND")
+	right:SetSize(12, 19)
+	right:SetPoint("RIGHT")
+	local middle = slider:CreateTexture(nil, "BACKGROUND")
+	middle:SetPoint("TOPLEFT", left, "TOPRIGHT")
+	middle:SetPoint("BOTTOMRIGHT", right, "BOTTOMLEFT")
+	local nativeLeft = UI.SetAtlas(left, "Minimal_SliderBar_Left")
+	local nativeRight = UI.SetAtlas(right, "Minimal_SliderBar_Right")
+	local nativeMiddle = UI.SetAtlas(middle, "_Minimal_SliderBar_Middle")
+	if nativeLeft and nativeRight and nativeMiddle then slider:SetBackdrop(nil) end
+
+	local thumb = slider:CreateTexture(nil, "ARTWORK")
+	local nativeThumb = UI.SetAtlas(thumb, "Minimal_SliderBar_Button", "Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
+	local thumbInfo = nativeThumb and atlasInfoCache.Minimal_SliderBar_Button
+	thumb:SetSize(thumbInfo and thumbInfo.width or 32, thumbInfo and thumbInfo.height or 32)
+	slider:SetThumbTexture(thumb)
+	slider.settingsThumb = thumb
 
 	local low = holder:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 	low:SetPoint("TOPLEFT", slider, "BOTTOMLEFT", 2, 0)
@@ -435,14 +688,21 @@ function Builder:Slider(opts)
 		slider:SetValue(value)
 		refreshing = false
 		valueText:SetText(fmt:format(value))
-		if b:IsDisabled(opts) then slider:Disable() else slider:Enable() end
-		label:SetTextColor(unpack(b:LabelColor(opts, opts.key and ns:IsPending(b.module, opts.key))))
+		local enabled = not b:IsDisabled(opts)
+		slider:SetEnabled(enabled)
+		for _, texture in ipairs({ left, middle, right, thumb }) do
+			texture:SetDesaturated(not enabled)
+			texture:SetAlpha(enabled and 1 or 0.4)
+		end
+		local color = b:LabelColor(opts, opts.key and ns:IsPending(b.module, opts.key))
+		label:SetTextColor(unpack(color))
+		valueText:SetTextColor(unpack(color))
 	end
 
-	-- 글자 크기 기능으로 글자가 커져도 아래 줄과 겹치지 않게 높이를 잰다.
-	local height = math.max((label:GetStringHeight() or 0) + 6 + 17 + (low:GetStringHeight() or 0) + 4, 48)
-	holder:SetHeight(height)
+	local height = math.max((label:GetStringHeight() or 0) + 4, 44)
+	holder:SetSize(width, height)
 	b:Place(holder, height, opts.indent)
+	b:SearchEntry(holder, opts.label, opts.tooltip)
 	return b:Track(holder)
 end
 
@@ -473,19 +733,24 @@ end)
 function Builder:KeyBind(opts)
 	local b = self
 	local command = opts.command
+	local width = b.width - PADDING * 2 - (opts.indent or 0)
+	local column = ControlOffset(width, opts.indent)
 
 	local row = CreateFrame("Frame", nil, b.page)
-	row:SetSize(b.width - PADDING * 2, 24)
+	row:SetSize(width, 24)
 
 	local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
 	label:SetPoint("LEFT", 4, 0)
-	label:SetWidth(150)
+	label:SetWidth(math.max(24, column - 16))
+	label:SetWordWrap(true)
 	label:SetJustifyH("LEFT")
 	label:SetText(opts.label)
+	row.settingsLabel = label
 
 	local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
 	btn:SetSize(140, 22)
-	btn:SetPoint("LEFT", label, "RIGHT", 6, 0)
+	btn:SetPoint("LEFT", row, "LEFT", column, 0)
+	row.settingsBindingButton = btn
 	btn:RegisterForClicks("AnyUp")
 
 	local warn = row:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
@@ -584,7 +849,10 @@ function Builder:KeyBind(opts)
 		warn:SetText(conflict)
 	end
 
-	b:Place(row, 24, opts.indent, 6)
+	local height = math.max((label:GetStringHeight() or 0) + 4, 24)
+	row:SetHeight(height)
+	b:Place(row, height, opts.indent, 6)
+	b:SearchEntry(row, opts.label, opts.tooltip or "단축키")
 	return b:Track(row)
 end
 
@@ -624,6 +892,9 @@ function Builder:Buttons(list)
 	end
 
 	b:Place(row, 24, nil, ROW_GAP)
+	for _, item in ipairs(items) do
+		b:SearchEntry(item.btn, item.def.text, item.def.tooltip, item.def.textFunc, row.settingsY, row.settingsHeight)
+	end
 	return b:Track(row)
 end
 
@@ -636,31 +907,33 @@ local ON_OFF_STATUS_WIDTH = 70
 function Builder:OnOff(opts)
 	local b = self
 	local width = b.width - PADDING * 2 - (opts.indent or 0)
+	local column = ControlOffset(width, opts.indent)
 
 	local row = CreateFrame("Frame", nil, b.page)
 
 	local offBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
 	offBtn:SetSize(ON_OFF_BUTTON_WIDTH, 22)
-	offBtn:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+	offBtn:SetPoint("LEFT", row, "LEFT", column + ON_OFF_STATUS_WIDTH + 6 + ON_OFF_BUTTON_WIDTH + 4, 0)
 	offBtn:SetText("끄기")
 
 	local onBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
 	onBtn:SetSize(ON_OFF_BUTTON_WIDTH, 22)
-	onBtn:SetPoint("RIGHT", offBtn, "LEFT", -4, 0)
+	onBtn:SetPoint("LEFT", row, "LEFT", column + ON_OFF_STATUS_WIDTH + 6, 0)
 	onBtn:SetText("켜기")
 
 	local status = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	status:SetWidth(ON_OFF_STATUS_WIDTH)
-	status:SetPoint("RIGHT", onBtn, "LEFT", -6, 0)
+	status:SetPoint("LEFT", row, "LEFT", column, 0)
 	status:SetJustifyH("LEFT")
 
 	local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
 	label:SetPoint("LEFT", row, "LEFT", 4, 0)
-	label:SetWidth(width - 4 - ON_OFF_STATUS_WIDTH - 6 - ON_OFF_BUTTON_WIDTH * 2 - 4 - 8)
+	label:SetWidth(math.max(24, column - 16))
+	label:SetWordWrap(true)
 	label:SetJustifyH("LEFT")
 	label:SetText(opts.label)
 
-	local height = math.max(label:GetStringHeight() or 0, 24)
+	local height = math.max((label:GetStringHeight() or 0) + 4, 24)
 	row:SetSize(width, height)
 
 	local function Run(fn)
@@ -690,23 +963,27 @@ function Builder:OnOff(opts)
 	end
 
 	b:Place(row, height, opts.indent, 4)
+	b:SearchEntry(row, opts.label, opts.tooltip)
 	return b:Track(row)
 end
 
 ---------------------------------------------------------------------------
 -- 선택 상자 (게임 기본 드롭다운)
 ---------------------------------------------------------------------------
-local DROPDOWN_LABEL_WIDTH = 110
-
 function Builder:Dropdown(opts)
 	local b = self
+	local width = b.width - PADDING * 2 - (opts.indent or 0)
+	local column = opts.label and ControlOffset(width, opts.indent) or 4
+	local dropdownWidth = math.min(opts.width or 240, math.max(80, width - column - 4))
 	local row = CreateFrame("Frame", nil, b.page)
 
 	local label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
 	label:SetPoint("LEFT", 4, 0)
-	label:SetWidth(opts.label and DROPDOWN_LABEL_WIDTH or 1)
+	label:SetWidth(opts.label and math.max(24, column - 16) or 1)
+	label:SetWordWrap(true)
 	label:SetJustifyH("LEFT")
 	label:SetText(opts.label or "")
+	row.settingsLabel = label
 
 	local function Options()
 		return opts.options() or {}
@@ -720,7 +997,7 @@ function Builder:Dropdown(opts)
 	local ok, dropdown = pcall(CreateFrame, "DropdownButton", nil, row, "WowStyle1DropdownTemplate")
 	local simple = not (ok and dropdown and dropdown.SetupMenu)
 	if not simple then
-		dropdown:SetWidth(opts.width or 240)
+		dropdown:SetWidth(dropdownWidth)
 		dropdown:SetDefaultText(opts.emptyText or "")
 		dropdown:SetupMenu(function(_, root)
 			for _, option in ipairs(Options()) do
@@ -730,7 +1007,7 @@ function Builder:Dropdown(opts)
 	else
 		-- 드롭다운이 없는 게임 버전이면 누를 때마다 다음 항목으로 넘어가는 버튼
 		dropdown = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-		dropdown:SetSize(opts.width or 240, 22)
+		dropdown:SetSize(dropdownWidth, 22)
 		dropdown:SetScript("OnClick", function()
 			local list, current, index = Options(), b:Get(opts), 1
 			for i, option in ipairs(list) do
@@ -739,7 +1016,8 @@ function Builder:Dropdown(opts)
 			if list[index] then Pick(list[index].value) end
 		end)
 	end
-	dropdown:SetPoint("LEFT", label, "RIGHT", 6, 0)
+	dropdown:SetPoint("LEFT", row, "LEFT", column, 0)
+	row.settingsDropdown = dropdown
 	AttachTooltip(dropdown, opts.label, opts.tooltip)
 
 	function row:Refresh()
@@ -757,9 +1035,10 @@ function Builder:Dropdown(opts)
 		label:SetTextColor(unpack(b:LabelColor(opts, opts.key and ns:IsPending(b.module, opts.key))))
 	end
 
-	local height = math.max(label:GetStringHeight() or 0, 28)
-	row:SetSize(b.width - PADDING * 2 - (opts.indent or 0), height)
+	local height = math.max((label:GetStringHeight() or 0) + 4, 28)
+	row:SetSize(width, height)
 	b:Place(row, height, opts.indent, 4)
+	b:SearchEntry(row, opts.label, opts.tooltip, DropdownKeywords(opts))
 	return b:Track(row)
 end
 
@@ -858,7 +1137,7 @@ local SCROLL_STEP = 40
 local SCROLLBAR_W = 6
 
 function UI.CreateScrollArea(parent)
-	local area = { content = 0 }
+	local area = { content = 0, range = 0 }
 
 	local scroll = CreateFrame("ScrollFrame", nil, parent)
 	scroll:EnableMouseWheel(true)
@@ -880,6 +1159,25 @@ function UI.CreateScrollArea(parent)
 	UI.ColorTexture(thumb, Theme.thumb)
 	thumb:SetSize(SCROLLBAR_W, 40)
 	bar:SetThumbTexture(thumb)
+	local top = bar:CreateTexture(nil, "OVERLAY")
+	top:SetSize(SCROLLBAR_W, 8)
+	top:SetPoint("TOP", thumb, "TOP")
+	local bottom = bar:CreateTexture(nil, "OVERLAY")
+	bottom:SetSize(SCROLLBAR_W, 8)
+	bottom:SetPoint("BOTTOM", thumb, "BOTTOM")
+	local middle = bar:CreateTexture(nil, "OVERLAY")
+	middle:SetPoint("TOPLEFT", top, "BOTTOMLEFT")
+	middle:SetPoint("BOTTOMRIGHT", bottom, "TOPRIGHT")
+	local nativeTop = UI.SetAtlas(top, "minimal-scrollbar-small-thumb-top")
+	local nativeMiddle = UI.SetAtlas(middle, "minimal-scrollbar-small-thumb-middle")
+	local nativeBottom = UI.SetAtlas(bottom, "minimal-scrollbar-small-thumb-bottom")
+	local native = nativeTop and nativeMiddle and nativeBottom
+	top:SetShown(native)
+	middle:SetShown(native)
+	bottom:SetShown(native)
+	if native then thumb:SetAlpha(0) end
+	bar.settingsThumb = thumb
+	bar.settingsThumbArt = { top, middle, bottom }
 	bar:Hide()
 	area.bar = bar
 
@@ -893,6 +1191,7 @@ function UI.CreateScrollArea(parent)
 		self.content = h
 		local visible = scroll:GetHeight()
 		local range = math.max(0, h - visible)
+		self.range = range
 		bar:SetMinMaxValues(0, range)
 		bar:SetShown(range > 0)
 		if bar:GetValue() > range then bar:SetValue(range) end
@@ -902,8 +1201,7 @@ function UI.CreateScrollArea(parent)
 	end
 
 	function area:ScrollTo(y)
-		local _, range = bar:GetMinMaxValues()
-		bar:SetValue(math.max(0, math.min(y, range)))
+		bar:SetValue(math.max(0, math.min(y, self.range)))
 	end
 
 	scroll:SetScript("OnSizeChanged", function()

@@ -280,7 +280,7 @@ local function BuildPerformance(b)
 	b:Text(RecordText, { font = "GameFontHighlight" })
 
 	-- 페이지가 보일 때만 돈다(숨은 프레임은 OnUpdate가 안 불린다).
-	if ProfilerState() ~= "unsupported" then
+	if not b.searchOnly and ProfilerState() ~= "unsupported" then
 		local ticker = CreateFrame("Frame", nil, b.page)
 		local sum = 0
 		ticker:SetScript("OnUpdate", function(_, elapsed)
@@ -312,8 +312,8 @@ function M:BuildOptions(b)
 	BuildPerformance(b)
 
 	b:Header("사용 방법")
-	b:Text("왼쪽 목록에서 기능을 고르고 설정을 바꾼 뒤 아래쪽 [저장]을 누르면 적용됩니다. "
-		.. "분류 이름을 누르면 그 분류를 접거나 펼 수 있습니다.\n"
+	b:Text("왼쪽에서 분류를 고르고 위쪽 탭에서 기능을 선택한 뒤, 설정을 바꾸고 아래쪽 [저장]을 누르면 적용됩니다. "
+		.. "위쪽 검색창에서 옵션 이름·설명·메뉴를 검색하면, 결과나 메뉴 경로를 눌러 해당 설정으로 이동할 수 있습니다.\n"
 		.. "저장 전에는 바뀐 항목과 메뉴에 주황색 표시가 붙고, [되돌리기]로 취소할 수 있습니다.\n"
 		.. "상인·퀘스트 자동 처리는 Shift를 누른 채 대화하면 그때만 건너뜁니다.\n\n"
 		.. "설정은 게임 종료나 /reload 때 WTF 폴더의 저장 파일(EzyWOWF.lua)에 기록됩니다.")

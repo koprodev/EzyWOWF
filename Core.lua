@@ -2,7 +2,7 @@
 --
 -- 새 기능은 Modules\ 폴더에 파일을 추가하고 ns:NewModule()로 등록한다.
 --   local M = ns:NewModule("Key", { title = "표시 이름", category = "auto", order = 20, icon = "Interface\\Icons\\...", defaults = {...}, bindings = {...} })
---   category 는 아래 ns.categories 의 key. 설정 창 왼쪽 메뉴에서 분류 아래 기능 한 줄 = 페이지 하나.
+--   category uses ns.categories: left-side category, feature tab, then option page.
 --   order 는 초기화·가져오기 순서까지 정하니 함부로 바꾸지 말 것. 메뉴는 (order, key) 순.
 --   M.db                      저장된 설정 (로드 후)
 --   M:OnInitialize()          저장 데이터 로드 직후
@@ -171,10 +171,12 @@ ns.categories = {
 	{ key = "auto",      title = "자동화",      icon = "Interface\\Icons\\INV_Gizmo_02" },
 	{ key = "quest",     title = "퀘스트",      icon = "Interface\\Icons\\INV_Misc_Book_08" },
 	{ key = "map",       title = "지도·길찾기", icon = "Interface\\Icons\\INV_Misc_Map_01" },
+	{ key = "professions", title = "직업기술",   icon = "Interface\\Icons\\Trade_BlackSmithing" },
 	{ key = "info",      title = "화면 정보",   icon = "Interface\\Icons\\INV_Misc_Spyglass_02" },
 	{ key = "item",      title = "툴팁·아이템", icon = "Interface\\Icons\\INV_Misc_Bag_08" },
 	{ key = "interface", title = "인터페이스",  icon = "Interface\\Icons\\INV_Misc_Wrench_01" },
 	{ key = "hunter",    title = "사냥꾼",      icon = "Interface\\Icons\\ClassIcon_Hunter" },
+	{ key = "druid",     title = "드루이드",    icon = "Interface\\Icons\\ClassIcon_Druid" },
 	{ key = "etc",       title = "기타" },
 }
 

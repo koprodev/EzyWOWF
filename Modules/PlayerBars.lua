@@ -1,5 +1,5 @@
--- 내 상태 막대: 적 대상 이름표 밑(어그로 상자가 있으면 그 오른쪽)에 내 체력 · 내 자원 · 연계 점수를 막대로 띄운다.
--- 연계 점수 줄이 없는 상태(사냥꾼, 곰·인간 드루이드, 최대치가 비밀값일 때)에 펫이 있으면 마지막 줄은 펫 체력.
+-- Player resources follow the target nameplate; bear-form mana is the final row.
+-- Pet health occupies the combo slot when combo points are unavailable.
 --
 -- 체력은 늘 비밀값이라 계산은 못 한다. 막대(SetValue)와 글자(SetFormattedText)는 비밀값을 받으니 그대로 넘기기만 한다.
 -- 연계 점수는 칸마다 막대 하나(최소 i-1, 최대 i)에 같은 값을 넣는다. 비교 없이도 i점이 되면 i번째 칸이 찬다.
@@ -16,7 +16,7 @@ local M = ns:NewModule("PlayerBars", {
 		enabled = true,
 		showHealth = true,
 		showPower = true,
-		powerColor = "fixed",   -- fixed = 파랑 고정, type = 자원 종류별 색
+		showDruidMana = true,
 		showCombo = true,
 		showPet = true,
 		combatOnly = false,
@@ -31,6 +31,8 @@ local SEGMENT_GAP = 3   -- 칸 사이. 테두리가 양쪽으로 1px씩 나오�
 local COLORS = {
 	health = { 0.2, 0.8, 0.3 },
 	power  = { 0.15, 0.55, 1 },
+	rage   = { 0.85, 0.15, 0.1 },
+	energy = { 1, 0.85, 0.1 },
 	combo  = { 1, 0.85, 0.1 },
 	pet    = { 1, 0.85, 0.1 },
 }
@@ -38,8 +40,10 @@ local COLORS = {
 local IsSecret = issecretvalue or function() return false end
 local Stack = ns.PlateStack
 local SCALE = CurveConstants and CurveConstants.ScaleTo100
+local PT = Enum and Enum.PowerType
+local MANA = PT and PT.Mana
 
-local db
+local db, isDruid
 local activePlate    -- 지금 줄을 띄우는 대상 이름표 (띄울 줄이 없어도 대상이 유효하면 기억)
 local activeToken    -- 그 이름표의 유닛 토큰. 제거 이벤트 때 API가 이미 nil을 줄 수 있어서 적어 둔다
 local inCombat = false
@@ -91,7 +95,12 @@ local function FillHealth(bar, unit, color)
 end
 
 local function PowerColor(s)
-	if db.powerColor == "type" and GetPowerBarColor then
+	local c
+	if s.powerToken == "RAGE" or (PT and PT.Rage ~= nil and s.powerType == PT.Rage) then c = COLORS.rage
+	elseif s.powerToken == "ENERGY" or (PT and PT.Energy ~= nil and s.powerType == PT.Energy) then c = COLORS.energy
+	elseif s.powerToken == "MANA" or (MANA ~= nil and s.powerType == MANA) then c = COLORS.power end
+	if c then return c[1], c[2], c[3] end
+	if GetPowerBarColor then
 		local c = (s.powerToken and GetPowerBarColor(s.powerToken)) or (s.powerType and GetPowerBarColor(s.powerType))
 		if type(c) == "table" and c.r then return c.r, c.g, c.b end
 	end
@@ -104,6 +113,14 @@ local function FillPower(bar, s)
 	bar:SetValue(UnitPower("player", s.powerType))
 	bar:SetStatusBarColor(PowerColor(s))
 	SetPercent(bar.text, PowerPercent(s.powerType))
+end
+
+local function FillDruidMana(bar, s)
+	bar:SetMinMaxValues(0, SafeMax(s.manaMax))
+	bar:SetValue(UnitPower("player", MANA))
+	local c = COLORS.power
+	bar:SetStatusBarColor(c[1], c[2], c[3])
+	SetPercent(bar.text, PowerPercent(MANA))
 end
 
 -- 칸 경계는 너비를 재지 않고 앵커로 잡는다. 안 보이는 자 막대(0~N 중 k)의 채움 끝이 정확히 k/N 지점이라
@@ -191,6 +208,11 @@ local ROWS = {
 		want = function(s) return db.showPet and s.comboCount == nil and UnitExists("pet") end,
 		fill = function(bar) FillHealth(bar, "pet", COLORS.pet) end,
 	},
+	{
+		key = "druidMana", order = 50, create = Stack.CreateBar,
+		want = function(s) return s.hasDruidMana end,
+		fill = FillDruidMana,
+	},
 }
 
 -- 연계 점수 칸 수. 연계 점수를 안 쓰는 상태(사냥꾼, 곰·인간 드루이드)이거나 최대치를 모르면 nil
@@ -210,6 +232,14 @@ local function ReadState(s)
 	s.powerMax = UnitPowerMax("player", powerType)
 	s.hasPower = IsSecret(s.powerMax) or (s.powerMax ~= nil and s.powerMax > 0)
 	s.comboCount = ComboCount(powerType)
+	s.hasDruidMana, s.manaMax = false, nil
+	if isDruid and db.showDruidMana and MANA ~= nil and ns.DruidForms then
+		local form = ns.DruidForms.GetCurrent()
+		if form.kind == "bear" then
+			s.manaMax = UnitPowerMax("player", MANA)
+			s.hasDruidMana = IsSecret(s.manaMax) or (s.manaMax ~= nil and s.manaMax > 0)
+		end
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -328,6 +358,8 @@ ns:RegisterUnitEvent("UNIT_POWER_FREQUENT", OnValueEvent, "player")
 ns:RegisterUnitEvent("UNIT_MAXPOWER", OnValueEvent, "player")
 ns:RegisterUnitEvent("UNIT_DISPLAYPOWER", OnValueEvent, "player")
 ns:RegisterUnitEvent("UNIT_PET", OnValueEvent, "player")
+ns:RegisterEvent("UPDATE_SHAPESHIFT_FORM", OnValueEvent)
+ns:RegisterEvent("UPDATE_SHAPESHIFT_FORMS", OnValueEvent)
 
 ---------------------------------------------------------------------------
 -- 모듈
@@ -335,6 +367,9 @@ ns:RegisterUnitEvent("UNIT_PET", OnValueEvent, "player")
 function M:OnInitialize()
 	db = self.db
 	db.height, db.showText = nil, nil   -- 0.4.1부터 이름표 모양으로 옮겨 간 설정
+	db.powerColor = nil
+	local _, class = UnitClass("player")
+	isDruid = not IsSecret(class) and class == "DRUID"
 	inCombat = InCombatLockdown() and true or false
 end
 
@@ -346,20 +381,16 @@ ns:On("PLATE_STYLE_CHANGED", function()
 	if db then Update() end
 end)
 
-local POWER_COLORS = {
-	{ value = "fixed", text = "파랑 고정" },
-	{ value = "type",  text = "자원 종류별 (마나·기력·분노 색)" },
-}
-
 function M:BuildOptions(b)
 	b:Text("적을 대상으로 잡으면 그 적의 이름표 밑에 내 체력 · 마나·기력·분노 · 연계 점수를 막대로 띄웁니다. "
-		.. "연계 점수를 안 쓰는 캐릭터(사냥꾼 등)는 마지막 줄에 펫 체력을 띄웁니다.")
+		.. "자원 막대 색은 분노 빨강·기력 노랑·마나 파랑입니다. 연계 점수를 안 쓰는 캐릭터(사냥꾼 등)는 펫 체력을 띄웁니다. "
+		.. "드루이드 곰 변신에서는 맨 아래에 남은 마나를 파란 막대로 추가합니다.")
 	b:Check{ key = "enabled", label = "사용" }
 	b:Check{ key = "showHealth", label = "내 체력", depends = "enabled" }
 	b:Check{ key = "showPower", label = "내 마나·기력·분노", depends = "enabled" }
-	b:Dropdown{
-		key = "powerColor", label = "자원 막대 색", width = 220, depends = { "enabled", "showPower" },
-		options = function() return POWER_COLORS end,
+	b:Check{
+		key = "showDruidMana", label = "곰 변신 중 남은 마나", depends = "enabled",
+		tooltip = "드루이드가 곰·광포한 곰으로 변신하면 맨 아래에 파란 마나 막대를 추가합니다. 인간형·표범·이동 변신에서는 숨깁니다.",
 	}
 	b:Check{
 		key = "showCombo", label = "연계 점수", depends = "enabled",

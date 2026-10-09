@@ -1,0 +1,5 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<Frame name="EzyWOWFZoneLevelPinTemplate" mixin="EzyWOWFZoneLevelPinMixin" enableMouse="false" virtual="true">
+		<Size x="100" y="20"/>
+	</Frame>
+</Ui>

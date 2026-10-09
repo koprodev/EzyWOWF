@@ -3,7 +3,7 @@
 -- 음식은 1~3순위로 등록한다. 지금 펫이 못 먹거나 가방에 없는 순위는 건너뛰어서, 펫마다 식성이 달라도 목록 하나로 된다.
 -- 등록한 음식이 다 떨어지면(또는 등록이 없으면) 알맞은 음식을 자동으로 고른다:
 -- 행복도가 제대로 오르는 음식(펫 레벨 - 10 이상) 중 가장 낮은 것, 그런 게 없으면 가진 것 중 가장 높은 것.
--- 먹이기는 보안 버튼 매크로 "/cast 먹이 주기" + "/use 가방 칸"이고 버튼은 둘이다.
+-- 먹이기는 보안 버튼 매크로 "/cast 먹이주기" + "/use 가방 칸"이고 버튼은 둘이다.
 --   EzyWOWFPetFeedButton  단축키·"/click" 매크로용 숨은 버튼. 뗄 때 동작(useOnKeyDown=false)으로 고정한다.
 --                         매크로의 /click은 뗄 때 누르는 것으로 처리돼서, 키 누를 때 발동 설정이 켜져 있으면 헛돈다.
 --   EzyWOWFPetFeedIcon    화면 버튼. 펫 초상화 옆이나 옮긴 자리에 있고, 펫이 없거나 죽으면 상태 드라이버가 숨긴다(전투 중에도).
@@ -21,7 +21,7 @@ local FEED_MACRO   = "펫 먹이"
 
 local FEED_PET    = 6991     -- 먹이 주기
 local FEED_EFFECT = 1539     -- 먹이 주기 효과 (먹는 동안 펫에 붙는 버프)
-local FEED_NAME_FALLBACK = "먹이 주기"
+local FEED_NAME_FALLBACK = "먹이주기"   -- 포에버 koKR은 붙여 쓴다
 local FEED_ICON_FALLBACK = "Interface\\Icons\\Ability_Hunter_BeastTraining"
 
 local RANKS = 3

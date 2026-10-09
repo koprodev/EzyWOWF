@@ -22,4 +22,6 @@
 	<Binding name="CLICK EzyWOWFTrackTREASURE:LeftButton" category="ADDONS"/>
 	<Binding name="CLICK EzyWOWFQuestMobButton:LeftButton" category="ADDONS"/>
 	<Binding name="CLICK EzyWOWFPetFeedButton:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFFishingCast:LeftButton" category="ADDONS"/>
+	<Binding name="CLICK EzyWOWFFishingLure:LeftButton" category="ADDONS"/>
 </Bindings>

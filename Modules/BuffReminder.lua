@@ -29,7 +29,6 @@ local BUFFS = {
 	DRUID = {
 		{ key = "DRUID_MARK", spells = { 1126 }, also = { 21849 } },
 		{ key = "DRUID_THORNS", spells = { 467 } },
-		{ key = "DRUID_OMEN", spells = { 16864 } },                                               -- 특성
 	},
 	WARLOCK = {
 		{ key = "WARLOCK_ARMOR", label = "악마 갑옷 주문", spells = { 706, 687 } },               -- 악마의 갑옷·피부
@@ -668,6 +667,7 @@ function M:BuildOptions(b)
 
 	b:Header("지금 상태")
 	local status = b:Text(StatusText, { font = "GameFontHighlight" })
+	if b.searchOnly then return end
 	-- 페이지가 보일 때만 돈다(숨은 프레임은 OnUpdate가 안 불린다).
 	local live = CreateFrame("Frame", nil, b.page)
 	local sum = 0

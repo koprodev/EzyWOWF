@@ -3,7 +3,7 @@
 ## Notes: Ezy WOW Forever - all-in-one convenience toolkit for WoW Forever (Korean UI). Minimap button or /ezy
 ## Notes-koKR: Ezy WOW Forever - 와우 포에버 통합 편의 애드온. 미니맵 버튼 또는 /이지
 ## Author: koprodev
-## Version: 0.7.0
+## Version: 0.8.0
 ## IconTexture: Interface\Icons\Trade_Engineering
 ## X-Website: https://github.com/koprodev/EzyWOWF
 ## X-License: MIT
@@ -17,12 +17,15 @@ Backup.lua
 Widgets.lua
 MainWindow.lua
 PlateStack.lua
+MinimapProjection.lua
+Modules\DruidForms.lua
 
 # 모듈. 줄 순서가 곧 로드 순서라 옮기지 말 것. 설정 창 분류는 각 파일의 category가 정한다.
 Modules\General.lua
 Modules\ReloadButton.lua
 Modules\CharacterCopy.lua
 Modules\Memo.lua
+Modules\ClassMacros.lua
 
 Modules\Vendor.lua
 Modules\QuestAuto.lua
@@ -32,8 +35,17 @@ Modules\AutoAccept.lua
 Modules\Minimap.lua
 Modules\InfoBar.lua
 Modules\MapCoords.lua
+Modules\ZoneLevelsData.lua
+Modules\ZoneLevels.lua
+Modules\ZoneLevels.xml
+Modules\TrainerData.lua
+Modules\TrainerFinder.lua
+Modules\TrainerFinderMinimap.lua
+Modules\TrainerFinderUI.lua
+Modules\TrainerFinder.xml
 Modules\Durability.lua
 Modules\BuffReminder.lua
+Modules\Cooldowns.lua
 Modules\PlateStyle.lua
 Modules\Threat.lua
 Modules\PlayerBars.lua
@@ -58,7 +70,16 @@ Modules\WindowMover.lua
 Modules\QuickBars.lua
 Modules\ChatTime.lua
 
+Modules\Fishing.lua
+Modules\FishingAlerts.lua
+Modules\FishingJournal.lua
+Modules\FishingUI.lua
+
 Modules\Tweaks.lua
 
 Modules\HunterPet.lua
 Modules\PetFeed.lua
+Modules\ShotSound.lua
+
+Modules\DruidResources.lua
+Modules\DruidAlerts.lua

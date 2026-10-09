@@ -5,13 +5,19 @@
 -- 몹 이름은 두 군데서 모은다.
 --   1) 퀘스트 목표 문구: "5/6 힘센 바위턱트로그 처치" -> "힘센 바위턱트로그"
 --   2) 이름표·마우스오버·대상의 툴팁 퀘스트 정보 (아이템을 떨구는 몹도 잡힌다)
--- 찾은 몹에 징표를 붙이는 것도 같은 매크로 안의 "/tm" 한 줄이다(SetRaidTarget은 애드온이 직접 못 부른다).
+-- Private markers use local nameplates; shared raid marks run inside the secure macro.
 
 local _, ns = ...
-local Clean, Print = ns.Clean, ns.Print
+local Print = ns.Print
+local IsSecret = type(issecretvalue) == "function" and issecretvalue or function() return false end
+local function Clean(value)
+	if IsSecret(value) then return nil end
+	return value
+end
 
 local BUTTON_NAME    = "EzyWOWFQuestMobButton"
 local TARGET_BINDING = "CLICK " .. BUTTON_NAME .. ":LeftButton"
+local SELECTED_CALLBACK = "EzyWOWFQuestMobTargetFound"
 local MAX_NAMES      = 8      -- 매크로 길이 제한(1023바이트) 안에 들어가도록
 local MAX_MACRO_LEN  = 1000
 local KILL_SUFFIXES  = { " 처치", " 처치함", " slain", " killed" }
@@ -35,15 +41,18 @@ local M = ns:NewModule("QuestMob", {
 		showMarker = true,
 		markerSize = 20,
 		markTarget = false,
+		shareTargetMark = false,
 		markIcon = DEFAULT_MARK,
 	},
 })
 
 local db
 local targets = {}         -- 대상 키에 들어간 몹 (우선순위 순) { name =, title =, learned = }
-local objectiveNames = {}  -- [이름] = true, 목표 문구에서 뽑은 이름
-local learned = {}         -- [이름] = 퀘스트 제목, 툴팁에서 알아낸 몹
-local openTitles = {}      -- [제목] = true, 아직 안 끝난 퀘스트
+local objectiveNames = {}  -- [name] = unfinished quest ID set from objective text.
+local learned = {}         -- [name][questID] = objective key set learned from unit tooltips.
+local openTitles = {}
+local openQuestIDs, allowedQuestIDs, questIDsByTitle = {}, {}, {}
+local selectedGUID
 local pendingAfterCombat = false
 local orderMatters = false  -- 후보 줄이 2개 이상이면 거리만 바뀌어도 결과가 달라진다
 local collectLossy = false  -- 지난번 목록이 덜 읽힌 데이터로 만들어졌다
@@ -63,11 +72,18 @@ local function Trim(s)
 	return (s:match("^%s*(.-)%s*$"))
 end
 
--- "5/6 힘센 바위턱트로그 처치", "힘센 바위턱트로그 처치: 5/6" -> "힘센 바위턱트로그"
-local function MobNameFromObjective(text)
+local function ObjectiveTextKey(text)
 	if type(text) ~= "string" then return nil end
 	text = text:gsub("^%s*%d+%s*/%s*%d+%s*", "")
 	text = text:gsub("%s*[:%(]?%s*%d+%s*/%s*%d+%s*%)?%s*$", "")
+	text = text:gsub("^%s*%d+%.?%d*%%%s*", "")
+	text = text:gsub("%s*[:%(]?%s*%d+%.?%d*%%%s*%)?%s*$", "")
+	return Trim(text)
+end
+
+local function MobNameFromObjective(text)
+	text = ObjectiveTextKey(text)
+	if not text then return nil end
 	for _, suffix in ipairs(KILL_SUFFIXES) do
 		if #text > #suffix and text:sub(-#suffix) == suffix then
 			local name = Trim(text:sub(1, -#suffix - 1))
@@ -82,6 +98,13 @@ local function SafeDistance(questID)
 	return type(distSq) == "number" and distSq or math.huge
 end
 
+local function FocusedQuestID()
+	if C_SuperTrack and type(C_SuperTrack.IsSuperTrackingUserWaypoint) == "function"
+		and Clean(C_SuperTrack.IsSuperTrackingUserWaypoint()) then return nil end
+	local id = C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID and Clean(C_SuperTrack.GetSuperTrackedQuestID())
+	return type(id) == "number" and id > 0 and id or nil
+end
+
 local function IsWatched(questID)
 	return C_QuestLog.GetQuestWatchType and C_QuestLog.GetQuestWatchType(questID) ~= nil or false
 end
@@ -90,69 +113,89 @@ end
 local scanLossy = false
 local function Keep(v)
 	local c = Clean(v)
-	if v ~= nil and c == nil then scanLossy = true end
+	if IsSecret(v) then scanLossy = true end
 	return c
 end
 
 local function CollectTargets()
-	local quests, byTitle, open = {}, {}, {}
+	local quests, open, byID, titleIDs, allowed = {}, {}, {}, {}, {}
+	local focusID = db.watchedOnly and FocusedQuestID() or nil
 	scanLossy = false
 	for index = 1, C_QuestLog.GetNumQuestLogEntries() do
 		local info = C_QuestLog.GetInfo(index)
-		local questID = info and not info.isHeader and info.questID
-		-- 아직 덜 읽힌 줄은 이벤트 없이 채워질 수 있어서 틱이 다시 보게 한다.
-		if info == nil or (not info.isHeader and not (questID and questID > 0)) then scanLossy = true end
-		if questID and questID > 0 and not Keep(C_QuestLog.IsComplete(questID)) then
-			if info.title then open[info.title] = true end
-			local watched = IsWatched(questID)
-			if not db.watchedOnly or watched then
-				local q = { questID = questID, title = info.title, dist = SafeDistance(questID), watched = watched, names = {} }
+		local questID = info and not info.isHeader and Clean(info.questID)
+		if info == nil or (not info.isHeader and not (type(questID) == "number" and questID > 0)) then scanLossy = true end
+		if type(questID) == "number" and questID > 0 and not Keep(C_QuestLog.IsComplete(questID)) then
+			local title = Clean(info.title)
+			if type(title) == "string" then
+				open[title] = true
+				titleIDs[title] = titleIDs[title] or {}
+				titleIDs[title][questID] = true
+			end
+			byID[questID] = true
+			if not db.watchedOnly or questID == focusID then
+				local q = { questID = questID, title = title, dist = SafeDistance(questID), watched = IsWatched(questID), names = {} }
 				local objectives = C_QuestLog.GetQuestObjectives(questID)
-				if objectives == nil or #objectives == 0 then scanLossy = true end   -- 빈 목록도 아직 안 읽힌 것일 수 있다
+				if objectives == nil or #objectives == 0 then scanLossy = true end
+				q.goalKeys, q.goalsByText = {}, {}
+				local identity = {}
+				for _, obj in ipairs(objectives or {}) do
+					local text = ObjectiveTextKey(Clean(obj.text))
+					local key = tostring(Clean(obj.type)) .. "\n" .. tostring(text)
+					identity[#identity + 1] = key
+					if not Clean(obj.finished) then q.goalKeys[key] = true end
+					if text then
+						q.goalsByText[text] = q.goalsByText[text] or {}
+						q.goalsByText[text][key] = true
+					end
+				end
+				table.sort(identity)
+				-- Unmatched tooltip labels retain quest-level membership.
+				q.unknownKey = "[unknown]\n" .. table.concat(identity, "\n")
+				q.goalKeys[q.unknownKey] = true
 				for _, obj in ipairs(objectives or {}) do
 					if obj.type == "monster" and not Keep(obj.finished) then
 						local name = MobNameFromObjective(Keep(obj.text))
-						if name then
-							q.names[#q.names + 1] = { name = name, title = info.title }
-						else
-							scanLossy = true   -- 이름이 아직 안 온 " 처치: 0/8" 같은 문구일 수 있어서 다시 본다
-						end
+						if name then q.names[#q.names + 1] = { name = name, title = title, questID = questID }
+						else scanLossy = true end
 					end
 				end
 				quests[#quests + 1] = q
-				if info.title then byTitle[info.title] = q end
+				allowed[questID] = q
 			end
 		end
 	end
-
-	-- 툴팁에서 알아낸 몹: 그 퀘스트가 끝났거나 목록에서 빠졌으면 잊는다.
-	for name, title in pairs(learned) do
-		if not open[title] then
-			learned[name] = nil
-		elseif byTitle[title] then
-			local list = byTitle[title].names
-			list[#list + 1] = { name = name, title = title, learned = true }
+	for name, ids in pairs(learned) do
+		for id, keys in pairs(ids) do
+			if not byID[id] then ids[id] = nil
+			elseif allowed[id] then
+				local q = allowed[id]
+				for key in pairs(keys) do
+					if not q.goalKeys[key] then keys[key] = nil end
+				end
+				if next(keys) == nil then ids[id] = nil
+				else q.names[#q.names + 1] = { name = name, title = q.title, questID = id, learned = true } end
+			end
 		end
+		if next(ids) == nil then learned[name] = nil end
 	end
-
 	table.sort(quests, function(a, b)
 		if a.dist ~= b.dist then return a.dist < b.dist end
 		if a.watched ~= b.watched then return a.watched end
 		return a.questID < b.questID
 	end)
-
-	-- 중복 제거 전 줄 수를 센다. 같은 몹이 두 퀘스트에 있으면 거리에 따라 제목이 바뀐다.
 	local list, seen, fromObjectives, entries = {}, {}, {}, 0
 	for _, q in ipairs(quests) do
 		for _, t in ipairs(q.names) do
 			entries = entries + 1
-			if not t.learned then fromObjectives[t.name] = true end
-			if not seen[t.name] and #list < MAX_NAMES then
-				seen[t.name] = true
-				list[#list + 1] = t
+			if not t.learned then
+				fromObjectives[t.name] = fromObjectives[t.name] or {}
+				fromObjectives[t.name][q.questID] = true
 			end
+			if not seen[t.name] and #list < MAX_NAMES then seen[t.name] = true list[#list + 1] = t end
 		end
 	end
+	openQuestIDs, allowedQuestIDs, questIDsByTitle = byID, allowed, titleIDs
 	return list, fromObjectives, open, entries >= 2, scanLossy
 end
 
@@ -166,7 +209,7 @@ end
 -- (블리자드 /tm 규칙: 같은 징표를 다시 눌러 떼지도, 파티장이 붙인 해골을 덮지도 않는다).
 -- 공격대에서는 권한이 없으면 오류만 나서 빼 둔다.
 local function MarkLine()
-	if not db.markTarget then return nil end
+	if not db.markTarget or not db.shareTargetMark then return nil end
 	local command = type(SLASH_TARGET_MARKER1) == "string" and SLASH_TARGET_MARKER1 or "/tm"
 	return ("%s [exists,nogroup:raid] ~%d"):format(command, RaidMarkIndex())
 end
@@ -176,14 +219,16 @@ local function BuildMacro(list)
 	if #list == 0 then return nil end
 	local lines = { "/cleartarget" }
 	local mark = MarkLine()
-	local tail = "/targetlasttarget [noexists]"
-	local length = #lines[1] + #tail + 2 + (mark and #mark + 1 or 0)
+	local found = "/run " .. SELECTED_CALLBACK .. "()"
+	local tail = "/targetlasttarget [noexists]\n/cleartarget [dead]"
+	local length = #lines[1] + #found + #tail + 3 + (mark and #mark + 1 or 0)
 	for _, t in ipairs(list) do
 		local add = "/targetexact [noexists] " .. t.name .. "\n/cleartarget [dead]"
 		if length + #add + 1 > MAX_MACRO_LEN then break end
 		lines[#lines + 1] = add
 		length = length + #add + 1
 	end
+	lines[#lines + 1] = found
 	if mark then lines[#lines + 1] = mark end
 	lines[#lines + 1] = tail
 	return table.concat(lines, "\n")
@@ -197,13 +242,14 @@ local LINE_OBJECTIVE = LineType and LineType.QuestObjective
 local LINE_TITLE = LineType and LineType.QuestTitle
 
 local function ObjectiveDone(line)
-	local completed = Clean(line.completed)
-	if completed ~= nil then return completed end
+	-- Progress text takes priority when tooltip completion flags disagree.
 	local text = Clean(line.leftText) or ""
 	local have, need = text:match("(%d+)%s*/%s*(%d+)")
 	if have then return tonumber(have) >= tonumber(need) end
-	local pct = text:match("(%d+)%%")
+	local pct = text:match("(%d+%.?%d*)%%")
 	if pct then return tonumber(pct) >= 100 end
+	local completed = Clean(line.completed)
+	if completed ~= nil then return completed end
 	return false
 end
 
@@ -212,36 +258,80 @@ local function QuestFromTooltip(unit)
 	if not (C_TooltipInfo and C_TooltipInfo.GetUnit and LINE_OBJECTIVE) then return nil end
 	local ok, data = pcall(C_TooltipInfo.GetUnit, unit)
 	if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then return nil end
-	local title
+	local ids, title, explicitID, sawObjective, hasIncomplete = {}, nil, nil, false, false
 	for _, line in ipairs(data.lines) do
 		local lineType = Clean(line.type)
 		if lineType == LINE_TITLE then
-			title = Clean(line.leftText)
-		elseif lineType == LINE_OBJECTIVE and not ObjectiveDone(line) then
-			return true, title
+			title, explicitID = Clean(line.leftText), Clean(line.questID)
+		elseif lineType == LINE_OBJECTIVE then
+			sawObjective = true
+			if not ObjectiveDone(line) then hasIncomplete = true end
+			local id = Clean(line.questID) or explicitID
+			if type(id) ~= "number" or id <= 0 then
+				id = nil
+				local matches = type(title) == "string" and questIDsByTitle[title]
+				if matches then
+					for candidate in pairs(matches) do
+						if id then id = nil break end
+						id = candidate
+					end
+				end
+			end
+			local quest = id and allowedQuestIDs[id]
+			if quest and quest.unknownKey and not ObjectiveDone(line) then
+				local text = Clean(line.leftText)
+				if type(text) == "string" then text = text:gsub("^%s*%-%s+", "") end
+				text = ObjectiveTextKey(text)
+				local keys = text and quest.goalsByText[text]
+				if not keys then keys = { [quest.unknownKey] = true } end
+				for key in pairs(keys) do
+					if quest.goalKeys[key] then
+						ids[id] = ids[id] or {}
+						ids[id][key] = true
+					end
+				end
+			end
 		end
 	end
-	return false
+	if not sawObjective then return nil end
+	return next(ids) ~= nil or (not db.watchedOnly and hasIncomplete), ids
 end
 
-local RequestRefresh   -- 아래에서 정의
+local RequestRefresh
 
--- 이 유닛이 퀘스트 몹인지 보고, 툴팁으로 확인된 이름은 대상 키용으로 기억한다.
 local function CheckUnit(unit)
-	if not UnitExists(unit) or Clean(UnitIsPlayer(unit)) then return false end
+	if not UnitExists(unit) or Clean(UnitIsPlayer(unit)) or Clean(UnitIsDead(unit)) then return false end
 	local name = Clean((UnitName(unit)))
-	local isQuest, title = QuestFromTooltip(unit)
+	local isQuest, ids = QuestFromTooltip(unit)
 	if isQuest == nil then
-		return name ~= nil and objectiveNames[name] == true
+		local objectives = name and objectiveNames[name]
+		if type(objectives) ~= "table" then return false end
+		for id in pairs(objectives) do if allowedQuestIDs[id] then return true end end
+		return false
 	end
-	-- 지금 열려 있는 퀘스트 제목과 맞을 때만 배운다. 제목이 안 맞는 것까지 배우면
-	-- 목록 정리 때 잊었다가 이름표 확인 때 다시 배우기를 끝없이 되풀이한다.
-	if name and not objectiveNames[name] then
-		local want = (isQuest and title and openTitles[title]) and title or nil
-		if learned[name] ~= want then
-			learned[name] = want
-			RequestRefresh()
+	if type(name) == "string" then
+		local changed = false
+		local known = learned[name]
+		if known then
+			for id in pairs(known) do
+				if allowedQuestIDs[id] and not ids[id] then known[id], changed = nil, true end
+			end
+			if next(known) == nil then learned[name] = nil end
 		end
+		for id, keys in pairs(ids) do
+			if not (objectiveNames[name] and objectiveNames[name][id]) then
+				learned[name] = learned[name] or {}
+				local knownKeys = learned[name][id]
+				if not knownKeys then knownKeys = {} learned[name][id] = knownKeys end
+				for key in pairs(knownKeys) do
+					if not keys[key] then knownKeys[key], changed = nil, true end
+				end
+				for key in pairs(keys) do
+					if not knownKeys[key] then knownKeys[key], changed = true, true end
+				end
+			end
+		end
+		if changed then RequestRefresh() end
 	end
 	return isQuest
 end
@@ -249,7 +339,8 @@ end
 ---------------------------------------------------------------------------
 -- 이름표 표시
 ---------------------------------------------------------------------------
-local markers = {}   -- [이름표 프레임] = 표시 프레임
+local markers = {}
+local privateMarkers, plateByUnit = {}, {}
 
 local function CreateMarker(plate)
 	local m = CreateFrame("Frame", nil, plate)
@@ -271,25 +362,83 @@ local function PlateFor(unit)
 	return plate
 end
 
+local function HidePlate(plate)
+	if markers[plate] then markers[plate]:Hide() end
+	if privateMarkers[plate] then privateMarkers[plate]:Hide() end
+end
+
+local function UpdatePrivateMarker(unit, plate, isQuest)
+	local marker = privateMarkers[plate]
+	local guid = Clean(UnitGUID(unit))
+	local show = db.enabled and db.markTarget and not db.shareTargetMark
+		and isQuest and selectedGUID and guid == selectedGUID
+	if show then
+		if not marker then
+			marker = CreateFrame("Frame", nil, plate)
+			marker:SetPoint("BOTTOM", plate, "TOP", 0, 8)
+			marker.texture = marker:CreateTexture(nil, "OVERLAY")
+			marker.texture:SetAllPoints()
+			privateMarkers[plate] = marker
+		end
+		marker:SetSize(db.markerSize, db.markerSize)
+		marker.texture:SetTexture(RAID_MARK_ICON:format(RaidMarkIndex()))
+		marker:Show()
+	elseif marker then marker:Hide() end
+end
+
 local function UpdatePlate(unit)
 	local plate = PlateFor(unit)
 	if not plate then return end
-	local show = db.enabled and CheckUnit(unit) and db.showMarker
-	local m = markers[plate]
-	if show then
-		m = m or CreateMarker(plate)
-		m:SetSize(db.markerSize, db.markerSize)
-		m:Show()
-	elseif m then
-		m:Hide()
-	end
+	local old = plateByUnit[unit]
+	if old and old ~= plate then HidePlate(old) end
+	plateByUnit[unit] = plate
+	local isQuest = db.enabled and CheckUnit(unit)
+	local marker = markers[plate]
+	if isQuest and db.showMarker then
+		marker = marker or CreateMarker(plate)
+		marker:SetSize(db.markerSize, db.markerSize)
+		marker:Show()
+	elseif marker then marker:Hide() end
+	UpdatePrivateMarker(unit, plate, isQuest)
 end
 
 local function UpdateAllPlates()
-	for i = 1, 40 do
-		local unit = "nameplate" .. i
-		if UnitExists(unit) then UpdatePlate(unit) end
+	if C_NamePlate and type(C_NamePlate.GetNamePlates) == "function" then
+		for _, plate in ipairs(C_NamePlate.GetNamePlates() or {}) do
+			if not (plate.IsForbidden and plate:IsForbidden()) and type(plate.GetUnit) == "function" then
+				local unit = Clean(plate:GetUnit())
+				if type(unit) == "string" and UnitExists(unit) then plateByUnit[unit] = plate end
+			end
+		end
+	else
+		for i = 1, 40 do
+			local unit = "nameplate" .. i
+			if UnitExists(unit) then
+				local plate = PlateFor(unit)
+				if plate then plateByUnit[unit] = plate end
+			end
+		end
 	end
+	for unit, plate in pairs(plateByUnit) do
+		if UnitExists(unit) then UpdatePlate(unit)
+		else HidePlate(plate) plateByUnit[unit] = nil end
+	end
+end
+
+local function SetSelectedGUID(guid)
+	if selectedGUID ~= guid then selectedGUID = guid ns:Fire("QUEST_MOB_TRACKED_CHANGED") end
+	UpdateAllPlates()
+end
+
+-- Capture before the macro restores the previous target.
+_G[SELECTED_CALLBACK] = function()
+	local guid
+	if db and db.enabled and CheckUnit("target") then guid = Clean(UnitGUID("target")) end
+	SetSelectedGUID(type(guid) == "string" and guid or nil)
+end
+
+function ns.GetTrackedQuestMobGUID()
+	return db and db.enabled and selectedGUID or nil
 end
 
 ---------------------------------------------------------------------------
@@ -329,6 +478,7 @@ end
 local function Refresh()
 	if not db then return end
 	RefreshTargets()
+	if selectedGUID and not CheckUnit("target") then SetSelectedGUID(nil) end
 	UpdateAllPlates()
 end
 
@@ -345,14 +495,24 @@ end
 
 button:SetScript("PostClick", function(_, _, down)
 	if down then return end
-	if db.enabled and #targets == 0 then Print("지금 대상으로 잡을 퀘스트 몹이 없어요.") end
+	if db.enabled and #targets == 0 then
+		if db.watchedOnly and not FocusedQuestID() then
+			Print("목표 창에서 선택한 퀘스트가 없어요.")
+		elseif db.watchedOnly then
+			Print("선택한 퀘스트에 남은 몹이 없어요.")
+		else
+			Print("지금 대상으로 잡을 퀘스트 몹이 없어요.")
+		end
+	end
 end)
 
 for _, event in ipairs({
 	"PLAYER_ENTERING_WORLD", "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED",
-	"QUEST_ACCEPTED", "QUEST_REMOVED", "ZONE_CHANGED_NEW_AREA",
+	"QUEST_ACCEPTED", "QUEST_REMOVED", "ZONE_CHANGED_NEW_AREA", "SUPER_TRACKING_CHANGED",
 }) do
-	ns:RegisterEvent(event, function() RequestRefresh() end)
+	ns:RegisterEvent(event, function(ev)
+		if ev == "SUPER_TRACKING_CHANGED" and db then Refresh() else RequestRefresh() end
+	end)
 end
 
 ns:RegisterUnitEvent("UNIT_QUEST_LOG_CHANGED", function(_, unit)
@@ -364,8 +524,9 @@ ns:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, unit)
 end)
 
 ns:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, unit)
-	local plate = PlateFor(unit)
-	if plate and markers[plate] then markers[plate]:Hide() end
+	local plate = plateByUnit[unit] or PlateFor(unit)
+	if plate then HidePlate(plate) end
+	plateByUnit[unit] = nil
 end)
 
 -- 이름표를 꺼 둔 경우에도 마우스를 올리거나 대상으로 잡은 몹에서 이름을 배운다.
@@ -373,7 +534,11 @@ ns:RegisterEvent("UPDATE_MOUSEOVER_UNIT", function()
 	if db and db.enabled then CheckUnit("mouseover") end
 end)
 ns:RegisterEvent("PLAYER_TARGET_CHANGED", function()
-	if db and db.enabled then CheckUnit("target") end
+	if db and db.enabled then
+		CheckUnit("target")
+		local guid = Clean(UnitGUID("target"))
+		if selectedGUID and guid ~= selectedGUID then SetSelectedGUID(nil) end
+	end
 end)
 
 ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
@@ -398,7 +563,7 @@ function M:OnLogin()
 end
 
 function M:ApplySettings()
-	if not db.enabled then wipe(learned) end
+	if not db.enabled then wipe(learned) SetSelectedGUID(nil) end
 	Refresh()
 end
 
@@ -434,12 +599,12 @@ end
 
 function M:BuildOptions(b)
 	b:Text("단축키를 누르면 아직 끝내지 않은 퀘스트의 몹을 대상으로 잡습니다. 가까운 퀘스트의 몹을 먼저 찾고, "
-		.. "근처에 없으면 원래 대상으로 돌아갑니다. 적 이름표에는 퀘스트 몹 표시를 띄웁니다.")
+		.. "시체는 대상에서 제외하며, 적 이름표에는 퀘스트 몹 표시를 띄웁니다.")
 	b:Check{ key = "enabled", label = "사용" }
 	b:KeyBind{ command = TARGET_BINDING, label = "퀘스트 몹 대상 잡기", depends = "enabled" }
 	b:Check{
-		key = "watchedOnly", label = "추적 중인 퀘스트의 몹만", depends = "enabled", indent = 20,
-		tooltip = "퀘스트 추적기에 표시된 퀘스트의 몹만 대상으로 잡습니다.",
+		key = "watchedOnly", label = "선택한 퀘스트의 몹만", depends = "enabled", indent = 20,
+		tooltip = "목표 창에서 노란 아이콘으로 선택한 퀘스트의 몹만 잡습니다. 선택이 없으면 다른 퀘스트 몹을 잡지 않습니다.",
 	}
 	b:Check{
 		key = "showMarker", label = "적 이름표에 퀘스트 몹 표시", depends = "enabled", indent = 20,
@@ -448,8 +613,12 @@ function M:BuildOptions(b)
 	b:Slider{ key = "markerSize", label = "표시 크기", min = 12, max = 40, step = 1, depends = { "enabled", "showMarker" } }
 	b:Check{
 		key = "markTarget", label = "찾은 몹에 징표 붙이기", depends = "enabled", indent = 20,
-		tooltip = "대상 키로 퀘스트 몹을 잡으면 그 몹에 아래에서 고른 징표를 붙입니다. 징표는 파티원에게도 보입니다.\n"
-			.. "못 찾아서 원래 대상으로 돌아가면 붙이지 않고, 이미 징표가 붙은 몹은 그대로 둡니다. 공격대에서는 붙이지 않습니다.",
+		tooltip = "대상 키로 찾은 몹에 고른 징표를 표시합니다. 기본은 내 화면의 적 이름표에만 보입니다.\n"
+			.. "못 찾아서 원래 대상으로 돌아가면 붙이지 않습니다. 공유할 때는 이미 징표가 붙은 몹을 그대로 두며, 공격대에서는 새 공용 징표를 붙이지 않습니다.",
+	}
+	b:Check{
+		key = "shareTargetMark", label = "파티원과 징표 공유", depends = { "enabled", "markTarget" }, indent = 20,
+		tooltip = "켜면 파티원에게도 보이는 게임 징표를 붙입니다. 끄면 새 공용 징표를 붙이지 않습니다. 이전 게임 징표는 자동으로 지우지 않습니다.",
 	}
 	b:Dropdown{
 		key = "markIcon", label = "붙일 징표", options = RaidMarkOptions, width = 160, indent = 20,
