@@ -1,4 +1,4 @@
--- 미니맵: 네모 모양, 크기, 네모에 맞춘 주변 버튼 배치.
+-- 미니맵: 네모 모양, 크기, 네모에 맞춘 주변 버튼 배치, 동서남북 표시.
 --
 -- 크기는 Minimap 프레임 자체의 크기를 바꾼다(ElvUI와 같은 방식). 편집 모드가 관리하는
 -- MinimapCluster·MinimapContainer는 건드리지 않는다.
@@ -27,6 +27,7 @@ local M = ns:NewModule("Minimap", {
 		size = 198,
 		outsideParts = true,
 		coordsInside = true,
+		compass = true,
 	},
 })
 
@@ -34,6 +35,9 @@ local DEFAULT_SIZE = 198
 local FILL_PAD = 3       -- 꽉 차게: 상자 가장자리와 지도 사이 (화면 픽셀)
 local OUTSIDE_GAP = 2    -- 바깥으로 옮긴 버튼과 지도 사이
 local COORDS_INSET = 4   -- 지도 안쪽 위로 옮긴 좌표와 지도 윗변 사이
+local COMPASS_INSET = 9  -- 동서남북 글자 가운데와 지도 가장자리 사이
+local COORDS_UNDER_N = 14   -- 나침반을 켜면 좌표를 '북' 글자 밑으로 내린다
+local COMPASS_TICK = 0.05   -- 회전 미니맵에서 글자를 다시 놓는 간격(초)
 local SQUARE_MASK = "Interface\\BUTTONS\\WHITE8X8"
 local FOREVER_ROUND_MASK = "ui-hud-minimap-frame-generic-mask"   -- 포에버 Skin.lua의 원형 마스크 (아틀라스)
 local CLASSIC_ROUND_MASK = "Textures\\MinimapMask"
@@ -242,7 +246,7 @@ local function PlaceCoords(inside)
 	if not coordsSaved then return end
 	if inside then
 		coords:ClearAllPoints()
-		coords:SetPoint("TOP", Minimap, "TOP", 0, -COORDS_INSET)
+		coords:SetPoint("TOP", Minimap, "TOP", 0, -COORDS_INSET - (db.compass and COORDS_UNDER_N or 0))
 		coords:SetFrameLevel(Minimap:GetFrameLevel() + 5)
 	elseif coordsMoved then
 		RestoreAnchors(coords, coordsSaved)
@@ -267,6 +271,73 @@ if zoomSaved then
 end
 
 ---------------------------------------------------------------------------
+-- 동서남북: 지도 안쪽 가장자리. 미니맵 회전을 켜면 캐릭터가 보는 방향만큼 같이 돈다.
+-- 회전 계산은 미니맵 점(전문가·채집 위치)과 같은 MinimapProjection.Project를 써서 방향이 어긋나지 않는다.
+---------------------------------------------------------------------------
+local COMPASS = {
+	{ text = "북", dx = 0, dn = 1, color = { 1, 0.3, 0.25 } },
+	{ text = "동", dx = 1, dn = 0 },
+	{ text = "남", dx = 0, dn = -1 },
+	{ text = "서", dx = -1, dn = 0 },
+}
+
+local compass = CreateFrame("Frame", nil, Minimap)
+compass:SetAllPoints()
+compass:SetFrameLevel(Minimap:GetFrameLevel() + 6)
+compass:Hide()
+for _, dir in ipairs(COMPASS) do
+	local fs = compass:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	local font = fs:GetFont()
+	if font then fs:SetFont(font, 12, "OUTLINE") end
+	fs:SetText(dir.text)
+	if dir.color then fs:SetTextColor(unpack(dir.color)) end
+	dir.label = fs
+end
+
+-- 회전이 꺼졌거나 게임이 회전을 무시하는 곳이면 0(북쪽이 위). 방향을 못 읽으면(비밀값 등) nil.
+local function CompassFacing()
+	if C_Minimap and type(C_Minimap.IsRotateMinimapIgnored) == "function" then
+		local ok, ignored = pcall(C_Minimap.IsRotateMinimapIgnored)
+		if ok and ns.Clean(ignored) == true then return 0 end
+	end
+	if not RotateMinimap() then return 0 end
+	local ok, facing = pcall(GetPlayerFacing)
+	facing = ok and ns.Clean(facing)
+	if type(facing) == "number" and facing == facing and math.abs(facing) < math.huge then return facing end
+end
+
+local placedFacing
+local function PlaceCompass(force)
+	local facing = CompassFacing()
+	if not facing or (not force and facing == placedFacing) then return end
+	local limit = math.min(Minimap:GetWidth(), Minimap:GetHeight()) / 2 - COMPASS_INSET
+	if limit <= 0 then return end
+	placedFacing = facing
+	local cosF, sinF = math.cos(facing), math.sin(facing)
+	for _, dir in ipairs(COMPASS) do
+		local sx, sy = ns.MinimapProjection.Project(dir.dx, dir.dn, cosF, sinF, 1, math.huge, false)
+		-- 방향만 쓰고 가장자리까지 늘린다: 네모는 가까운 변에, 둥근 지도는 원에 닿게
+		local reach = db.square and math.max(math.abs(sx), math.abs(sy)) or math.sqrt(sx * sx + sy * sy)
+		dir.label:ClearAllPoints()
+		dir.label:SetPoint("CENTER", compass, "CENTER", sx / reach * limit, sy / reach * limit)
+	end
+end
+
+local compassElapsed = 0
+local function CompassOnUpdate(_, elapsed)
+	compassElapsed = compassElapsed + elapsed
+	if compassElapsed < COMPASS_TICK then return end
+	compassElapsed = 0
+	PlaceCompass(false)
+end
+
+local function ApplyCompass()
+	compass:SetShown(db.compass)
+	compass:SetScript("OnUpdate", db.compass and RotateMinimap() and CompassOnUpdate or nil)
+	if db.compass then PlaceCompass(true) end
+end
+
+---------------------------------------------------------------------------
 -- 적용
 ---------------------------------------------------------------------------
 local function Apply()
@@ -275,6 +346,7 @@ local function Apply()
 	ApplyShape(size)
 	PlaceParts(db.square and db.outsideParts)
 	PlaceCoords(db.square and db.coordsInside)
+	ApplyCompass()
 
 	-- 크기를 바꾼 뒤 지도가 바로 다시 그려지도록 확대 단계를 한 번 흔든다.
 	if appliedSize and math.abs(appliedSize - size) > 0.5 then
@@ -348,6 +420,11 @@ function M:BuildOptions(b)
 	b:Check{
 		key = "coordsInside", label = "좌표를 지도 안쪽 위 가운데로", depends = "square", indent = 20,
 		tooltip = "지도 밑에 있는 게임 기본 좌표를 지도 안쪽 위로 옮깁니다. 지도 밑에는 추적 아이콘이 붙습니다.",
+	}
+	b:Check{
+		key = "compass", label = "동서남북 표시",
+		tooltip = "지도 안쪽 가장자리에 북·동·남·서를 적습니다(북은 빨강). 게임 설정에서 미니맵 회전을 켜면 "
+			.. "캐릭터가 보는 방향에 맞춰 함께 돕니다. 좌표를 지도 안쪽 위에 두면 '북' 밑으로 내립니다.",
 	}
 	b:Check{
 		key = "fill", label = "기본 UI 상자에 꽉 차게",

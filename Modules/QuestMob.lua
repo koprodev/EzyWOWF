@@ -18,8 +18,10 @@ end
 local BUTTON_NAME    = "EzyWOWFQuestMobButton"
 local TARGET_BINDING = "CLICK " .. BUTTON_NAME .. ":LeftButton"
 local SELECTED_CALLBACK = "EzyWOWFQuestMobTargetFound"
-local MAX_NAMES      = 8      -- 매크로 길이 제한(1023바이트) 안에 들어가도록
-local MAX_MACRO_LEN  = 1000
+local FOUND_LINE     = "/run " .. SELECTED_CALLBACK .. "()"
+local RESTORE_LINES  = "/targetlasttarget [noexists]\n/cleartarget [dead]"
+-- 보안 버튼 매크로는 255바이트 뒤를 말없이 자른다. 한글 이름은 3바이트라 보통 2~3마리가 한계
+local MAX_MACRO_BYTES = 255
 local KILL_SUFFIXES  = { " 처치", " 처치함", " slain", " killed" }
 local MARKER_ATLAS   = "QuestNormal"
 local MARKER_TEXTURE = "Interface\\GossipFrame\\AvailableQuestIcon"
@@ -192,7 +194,7 @@ local function CollectTargets()
 				fromObjectives[t.name] = fromObjectives[t.name] or {}
 				fromObjectives[t.name][q.questID] = true
 			end
-			if not seen[t.name] and #list < MAX_NAMES then seen[t.name] = true list[#list + 1] = t end
+			if not seen[t.name] then seen[t.name] = true list[#list + 1] = t end
 		end
 	end
 	openQuestIDs, allowedQuestIDs, questIDsByTitle = byID, allowed, titleIDs
@@ -214,23 +216,36 @@ local function MarkLine()
 	return ("%s [exists,nogroup:raid] ~%d"):format(command, RaidMarkIndex())
 end
 
+local function TargetLines(name)
+	return "/targetexact [noexists] " .. name .. "\n/cleartarget [dead]"
+end
+
+-- 255바이트에 들어가는 이름만 우선순위대로 남긴다. 긴 이름이 빠져도 뒤의 짧은 이름은 마저 채운다.
+-- 잘린 매크로는 기록·복원 줄이 날아가 /run이 Lua 오류를 내니, 고정 줄 자리부터 떼어 둔다.
+local function FitMacro(list)
+	local mark = MarkLine()
+	local room = MAX_MACRO_BYTES - (#"/cleartarget" + 1 + #FOUND_LINE + 1 + (mark and #mark + 1 or 0) + #RESTORE_LINES)
+	local fitted = {}
+	for _, t in ipairs(list) do
+		local cost = #TargetLines(t.name) + 1
+		if cost <= room then
+			fitted[#fitted + 1] = t
+			room = room - cost
+		end
+	end
+	return fitted
+end
+
 -- 앞에서부터 찾다가 살아 있는 몹을 잡으면 멈춘다. 아무도 없으면 원래 대상으로 돌아간다.
+-- list는 FitMacro를 거친 목록이어야 한다.
 local function BuildMacro(list)
 	if #list == 0 then return nil end
 	local lines = { "/cleartarget" }
+	for _, t in ipairs(list) do lines[#lines + 1] = TargetLines(t.name) end
+	lines[#lines + 1] = FOUND_LINE
 	local mark = MarkLine()
-	local found = "/run " .. SELECTED_CALLBACK .. "()"
-	local tail = "/targetlasttarget [noexists]\n/cleartarget [dead]"
-	local length = #lines[1] + #found + #tail + 3 + (mark and #mark + 1 or 0)
-	for _, t in ipairs(list) do
-		local add = "/targetexact [noexists] " .. t.name .. "\n/cleartarget [dead]"
-		if length + #add + 1 > MAX_MACRO_LEN then break end
-		lines[#lines + 1] = add
-		length = length + #add + 1
-	end
-	lines[#lines + 1] = found
 	if mark then lines[#lines + 1] = mark end
-	lines[#lines + 1] = tail
+	lines[#lines + 1] = RESTORE_LINES
 	return table.concat(lines, "\n")
 end
 
@@ -467,7 +482,9 @@ end
 local function RefreshTargets()
 	local before = TargetsSignature()
 	if db.enabled then
-		targets, objectiveNames, openTitles, orderMatters, collectLossy = CollectTargets()
+		local list
+		list, objectiveNames, openTitles, orderMatters, collectLossy = CollectTargets()
+		targets = FitMacro(list)
 	else
 		targets, objectiveNames, openTitles, orderMatters, collectLossy = {}, {}, {}, false, false
 	end
@@ -633,6 +650,7 @@ function M:BuildOptions(b)
 	}
 	b:Text("- 몹 이름은 퀘스트 목표 문구(\"~ 처치\")에서 뽑고, 아이템을 떨구는 몹은 이름표에 뜨거나 "
 		.. "마우스를 올렸을 때 툴팁의 퀘스트 정보로 알아냅니다.\n"
+		.. "- 게임이 단축키 매크로를 255바이트까지만 읽어서, 대상 키에는 가까운 퀘스트의 몹부터 들어가는 만큼만 넣습니다(한글 이름은 보통 2~3마리).\n"
 		.. "- 전투 중에는 목록이 바뀌어도 대상 키에 바로 반영되지 않고 전투가 끝난 뒤 반영됩니다.",
 		{ color = { 0.7, 0.7, 0.7 } })
 	b:Text(TargetsText)

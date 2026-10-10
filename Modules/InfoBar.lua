@@ -71,6 +71,14 @@ local function PlayerCoords()
 	return x * 100, y * 100
 end
 
+-- 다른 모듈이 막대 끝에 붙이는 조각: { text = fn() → 글자|nil, tooltip = fn(GameTooltip), click = fn() }
+-- text는 0.25초마다 불리니 미리 만들어 둔 글자를 돌려줄 것. 툴팁·클릭이 있는 조각이 보일 때만 막대가 마우스를 받는다.
+local extras = {}
+local hoverPart, mouseOn = nil, false
+function ns.AddInfoBarPart(part)
+	extras[#extras + 1] = part
+end
+
 -- 0.25초마다 도는 곳이라 조각 표 하나를 계속 돌려 쓴다.
 local parts, partCount = {}, 0
 local function Add(s)
@@ -117,6 +125,15 @@ local function BuildText()
 			Add(moneyText)
 		end
 	end
+	hoverPart = nil
+	for i = 1, #extras do
+		local part = extras[i]
+		local s = part.text()
+		if s then
+			Add(s)
+			if not hoverPart and (part.tooltip or part.click) then hoverPart = part end
+		end
+	end
 	for i = partCount + 1, previous do parts[i] = nil end
 	return table.concat(parts, "   ", 1, partCount)
 end
@@ -140,6 +157,24 @@ bar:SetScript("OnUpdate", function(_, elapsed)
 		bar:SetWidth(width)
 		shownWidth = width
 	end
+	local wantMouse = moveMode or hoverPart ~= nil
+	if wantMouse ~= mouseOn then
+		mouseOn = wantMouse
+		bar:EnableMouse(wantMouse)
+		if not wantMouse and GameTooltip:IsOwned(bar) then GameTooltip:Hide() end
+	end
+end)
+
+bar:SetScript("OnEnter", function(self)
+	if moveMode or not (hoverPart and hoverPart.tooltip) then return end
+	GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+	hoverPart.tooltip(GameTooltip)
+	GameTooltip:Show()
+end)
+bar:SetScript("OnLeave", GameTooltip_Hide)
+bar:SetScript("OnMouseUp", function(_, button)
+	if moveMode or button ~= "LeftButton" or not (hoverPart and hoverPart.click) then return end
+	hoverPart.click()
 end)
 
 ---------------------------------------------------------------------------
@@ -167,6 +202,7 @@ local function UpdateVisibility()
 	-- 숨어 있는 동안 글꼴이 바뀌었을 수도 있으니, 다시 켜지면 글자·폭을 처음부터 넣는다.
 	if not db.enabled then shownText, shownWidth = nil, nil end
 	bar:EnableMouse(moveMode)
+	mouseOn = moveMode
 	moveTint:SetShown(moveMode)
 end
 
@@ -222,7 +258,8 @@ end
 function M:BuildOptions(b)
 	local function Disabled() return not db.enabled end
 
-	b:Text("미니맵 아래에 내 좌표, FPS, 지연시간, 장비 내구도, 소지 골드를 작게 보여 줍니다.")
+	b:Text("미니맵 아래에 내 좌표, FPS, 지연시간, 장비 내구도, 소지 골드를 작게 보여 줍니다. "
+		.. "시간당 경험치는 화면 정보 > 경험치 통계에서 켜고 끕니다.")
 	b:Check{ key = "enabled", label = "사용" }
 	b:Check{ key = "showCoords", label = "좌표", depends = "enabled", indent = 20 }
 	b:Check{ key = "showFPS", label = "FPS (초당 프레임)", depends = "enabled", indent = 20 }

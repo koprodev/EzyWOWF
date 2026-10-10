@@ -268,6 +268,17 @@ function ns.FormatMoney(copper)
 	return ("%d골드 %d실버 %d코퍼"):format(gold, silver, copper % 100)
 end
 
+-- 블리자드 가방 창: 따로 연 가방(ContainerFrame1~N)과 합친 가방
+function ns.BagFrames()
+	local frames = {}
+	for i = 1, NUM_CONTAINER_FRAMES or 13 do
+		local frame = _G["ContainerFrame" .. i]
+		if frame then frames[#frames + 1] = frame end
+	end
+	if ContainerFrameCombinedBags then frames[#frames + 1] = ContainerFrameCombinedBags end
+	return frames
+end
+
 local function CopyDefaults(src, dst)
 	for k, v in pairs(src) do
 		if type(v) == "table" then

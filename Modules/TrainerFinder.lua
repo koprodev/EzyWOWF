@@ -34,6 +34,10 @@ local KINDS = {
 	{ "FISHING", "낚시", "Trade_Fishing" },
 	{ "PET", "야수 훈련", "Ability_Hunter_BeastTraining" },
 	{ "WEAPON", "무기 기술", "INV_Sword_04" },
+	-- 상인은 가르치는 게 없어서 [모든 전문 기술]에 안 끼고 '○○ 상인'으로 부른다
+	{ "TRADE", "직업용품", "INV_Fabric_Linen_01", vendor = true },
+	{ "GENERAL", "일용품", "INV_Misc_Bag_10", vendor = true },
+	{ "REAGENT", "마법 재료", "INV_Misc_Rune_06", vendor = true },
 }
 local BY_KIND = {}
 for _, kind in ipairs(KINDS) do
@@ -88,7 +92,7 @@ local function MatchesKind(kind)
 	if viewKind == "all" then return true end
 	if viewKind == "myclass" then return kind == PlayerClass() end
 	if viewKind == "classes" then return info[4] == true end
-	if viewKind == "professions" then return not info[4] and kind ~= "PET" and kind ~= "WEAPON" end
+	if viewKind == "professions" then return not info[4] and not info.vendor and kind ~= "PET" and kind ~= "WEAPON" end
 	return kind == viewKind
 end
 
@@ -105,11 +109,53 @@ ns.TrainerFinder = Finder
 
 function Finder.GetKinds() return KINDS end
 function Finder.GetKind() return viewKind end
+function Finder.IsVendor(kind) return BY_KIND[kind] and BY_KIND[kind].vendor == true or false end
+function Finder.KindTitle(kind)
+	local info = BY_KIND[kind]
+	return info and (info[2] .. (info.vendor and " 상인" or " 전문가")) or ""
+end
+-- 상인은 '파는 물건', 전문가는 '가르치는 기술'이 다를 수 있다
+function Finder.DiffersNote(kind)
+	return Finder.IsVendor(kind) and "파는 물건" or "가르치는 기술"
+end
 function Finder.IsKindChecked(kind) return MatchesKind(kind) and true or false end
 
 local function ValidKind(kind)
 	return type(kind) == "string" and (BY_KIND[kind] or kind == "all" or kind == "myclass"
 		or kind == "classes" or kind == "professions" or kind == "custom")
+end
+
+-- localize 줄(위키 자료)은 영어 이름이라 NPC 번호로 게임에 물어 본 이름을 쓴다.
+-- 처음 물을 땐 서버 응답 전이라 빈손일 수 있어서, 잠시 뒤 한 번만 다시 그린다. 끝내 못 받으면 영어 그대로.
+local Rebuild
+local localNames = {}
+local namesRetried, retryQueued = {}, false
+local CREATURE_LINK = "unit:Creature-0-0-0-0-%d-0000000000"
+
+local function LocalName(row)
+	if not row.localize then return row.name end
+	local name = localNames[row.id]
+	if name then return name end
+	local lookup = C_TooltipInfo and C_TooltipInfo.GetHyperlink
+	local ok, data = false, nil
+	if type(lookup) == "function" then ok, data = pcall(lookup, CREATURE_LINK:format(row.id)) end
+	local line = ok and type(data) == "table" and type(data.lines) == "table" and data.lines[1]
+	name = type(line) == "table" and Clean(line.leftText)
+	if type(name) == "string" and name ~= "" and name ~= RETRIEVING_DATA then
+		localNames[row.id] = name
+		return name
+	end
+	if not namesRetried[row.id] then
+		namesRetried[row.id] = true
+		if not retryQueued then
+			retryQueued = true
+			C_Timer.After(2, function()
+				retryQueued = false
+				Rebuild()
+			end)
+		end
+	end
+	return row.name
 end
 
 function Finder.GetResults(id)
@@ -121,6 +167,7 @@ function Finder.GetResults(id)
 			and (not db or not db.factionOnly or not row.faction or row.faction == faction) then
 			local result = {}
 			for key, value in pairs(row) do result[key] = value end
+			result.name = LocalName(row)
 			result.mapID = id
 			results[#results + 1] = result
 		end
@@ -139,7 +186,7 @@ local function Refresh()
 	if attached and WorldMapFrame:IsShown() then provider:RefreshAllData() end
 end
 
-local function Rebuild()
+function Rebuild()
 	Refresh()
 	ns:Fire("TRAINER_FINDER_CHANGED")
 	C_Timer.After(0, function() ns:Fire("REBUILD_OPTIONS") end)
@@ -264,12 +311,14 @@ function EzyWOWFTrainerPinMixin:OnMouseEnter()
 	local row = self.row
 	GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 	GameTooltip:SetText(row.name, 1, 0.82, 0)
-	GameTooltip:AddLine(BY_KIND[row.kind][2] .. " 전문가", 1, 1, 1)
-	if type(row.role) == "string" and row.role ~= "" then GameTooltip:AddLine(row.role, 0.9, 0.9, 0.9) end
+	local title = Finder.KindTitle(row.kind)
+	GameTooltip:AddLine(title, 1, 1, 1)
+	-- 상인은 부제가 '직업용품 상인'처럼 윗줄과 같아서 한 번만
+	if type(row.role) == "string" and row.role ~= "" and row.role ~= title then GameTooltip:AddLine(row.role, 0.9, 0.9, 0.9) end
 	GameTooltip:AddLine(("%s%s · %.1f, %.1f"):format(MapName(row.mapID),
 		row.location and (" / " .. row.location) or "", row.x * 100, row.y * 100), 0.8, 0.8, 0.8)
 	GameTooltip:AddLine("클릭: 여기로 길 안내", 0.5, 0.8, 1)
-	GameTooltip:AddLine("참고 위치입니다. 포에버에서 위치·가르치는 기술이 다를 수 있어요.", 0.65, 0.65, 0.65, true)
+	GameTooltip:AddLine(("참고 위치입니다. 포에버에서 위치·%s이 다를 수 있어요."):format(Finder.DiffersNote(row.kind)), 0.65, 0.65, 0.65, true)
 	GameTooltip:Show()
 end
 
@@ -366,7 +415,7 @@ end
 
 function M:BuildOptions(b)
 	b:Text("미니맵 옆 찾기 아이콘이나 세계 지도(M)의 [전문가] 버튼으로 작은 패널을 펼쳐 종류를 체크하세요. 여러 종류를 함께 표시할 수 있고 선택은 바로 저장됩니다. 지역과 전문가를 골라 [지도에서 찾기]를 누르거나 지도 아이콘을 클릭하세요.")
-	b:Text("참고 위치이며, 포에버의 실제 위치와 가르치는 기술·등급은 다를 수 있습니다. 찾는 곳이 목록에 없으면 다른 지역도 확인하세요.")
+	b:Text("참고 위치이며, 포에버의 실제 위치와 가르치는 기술·등급, 상인이 파는 물건은 다를 수 있습니다. 찾는 곳이 목록에 없으면 다른 지역도 확인하세요.")
 	b:Check{ key = "enabled", label = "사용" }
 	b:Check{ key = "showButton", label = "미니맵 옆 찾기 아이콘 표시", depends = "enabled", indent = 20 }
 	b:Check{ key = "showMapButton", label = "세계 지도에 전문가 찾기 버튼 표시", depends = "enabled", indent = 20 }
@@ -376,7 +425,7 @@ function M:BuildOptions(b)
 	b:Slider{ key = "pinSize", label = "지도 아이콘 크기", min = 12, max = 32, step = 1, depends = "enabled", indent = 20 }
 	b:Header("전문가 찾기")
 	b:Dropdown{ label = "전문가 종류", width = 300, options = KindOptions, get = function() return viewKind end,
-		set = Finder.SetKind, depends = "enabled", tooltip = "종류 선택은 바로 지도에 반영됩니다. 내 직업·각 직업·연금술·요리·낚시 등으로 좁혀 찾으세요." }
+		set = Finder.SetKind, depends = "enabled", tooltip = "종류 선택은 바로 지도에 반영됩니다. 내 직업·각 직업·연금술·요리·낚시·직업용품 상인 등으로 좁혀 찾으세요." }
 	b:Dropdown{ label = "지역", width = 300, options = RegionOptions, get = Region, set = Finder.SetRegion,
 		emptyText = "지역을 고르세요", depends = "enabled" }
 	b:Dropdown{ label = "전문가", width = 300, options = Finder.GetTrainerOptions,

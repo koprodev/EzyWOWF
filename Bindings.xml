@@ -5,6 +5,9 @@
 	<Binding name="EZYWOWF_MEMO" category="ADDONS">
 		EzyWOWF_ToggleMemo()
 	</Binding>
+	<Binding name="EZYWOWF_XPSTATS" category="ADDONS">
+		EzyWOWF_ToggleXPStats()
+	</Binding>
 	<Binding name="CLICK EzyWOWFQuestItemButton:LeftButton" category="ADDONS"/>
 	<Binding name="EZYWOWF_QUESTITEM_NEXT" category="ADDONS">
 		EzyWOWF_QuestItemNext()

@@ -1,4 +1,5 @@
 -- 잡템 자동 판매 + 자동 수리. 상인 창이 열리면 동작하고, Shift를 누르고 열면 건너뛴다.
+-- 판매는 게임의 일괄 판매(C_MerchantFrame.SellAllJunkItems)를 쓰고, 없는 클라이언트에서만 한 칸씩 판다.
 
 local _, ns = ...
 local Print = ns.Print
@@ -18,8 +19,10 @@ local M = ns:NewModule("Vendor", {
 })
 
 local POOR = (Enum and Enum.ItemQuality and Enum.ItemQuality.Poor) or 0
+local EXCLUDE_JUNK_SELL = (Enum and Enum.BagSlotFlags and Enum.BagSlotFlags.ExcludeJunkSell) or 64
 local LAST_BAG = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4
-local SELL_INTERVAL = 0.1   -- 한꺼번에 팔면 서버가 거부해서 조금씩 판다
+local SELL_INTERVAL = 0.1   -- 일괄 판매가 없을 때만: 한꺼번에 팔면 서버가 거부해서 조금씩 판다
+local REPORT_WAIT = 1.5     -- 일괄 판매 뒤 가방이 비워질 때까지 기다렸다가 판 것을 센다
 
 local db
 local merchantOpen = false
@@ -71,16 +74,26 @@ local function SellPrice(itemID)
 	return price or 0
 end
 
+-- 가방 설정 '이 가방 무시 > 잡동사니 판매'에 체크한 가방은 안 판다. 게임의 '모든 잡동사니 아이템 판매'와 같은 규칙
+local function SellLocked(bag)
+	if bag == 0 then
+		return C_Container.GetBackpackSellJunkDisabled and ns.Clean(C_Container.GetBackpackSellJunkDisabled()) or false
+	end
+	return C_Container.GetBagSlotFlag and ns.Clean(C_Container.GetBagSlotFlag(bag, EXCLUDE_JUNK_SELL)) or false
+end
+
 local function CollectJunk()
 	wipe(queue)
 	for bag = 0, LAST_BAG do
-		for slot = 1, C_Container.GetContainerNumSlots(bag) do
-			local info = C_Container.GetContainerItemInfo(bag, slot)
-			if info and info.quality == POOR and not info.hasNoValue then
-				queue[#queue + 1] = {
-					bag = bag, slot = slot, itemID = info.itemID,
-					value = SellPrice(info.itemID) * (info.stackCount or 1),
-				}
+		if not SellLocked(bag) then
+			for slot = 1, C_Container.GetContainerNumSlots(bag) do
+				local info = C_Container.GetContainerItemInfo(bag, slot)
+				if info and info.quality == POOR and not info.hasNoValue then
+					queue[#queue + 1] = {
+						bag = bag, slot = slot, itemID = info.itemID,
+						value = SellPrice(info.itemID) * (info.stackCount or 1),
+					}
+				end
 			end
 		end
 	end
@@ -113,12 +126,39 @@ local function SellNext()
 	C_Timer.After(SELL_INTERVAL, SellNext)
 end
 
+-- 게임의 '모든 잡동사니 아이템 판매'는 서버에 한 번만 요청한다. 한 칸씩 빨리 팔다 요청이 엇갈려
+-- 아이템이 잠긴 채 남는 일이 없고, 판매 잠금 가방도 게임이 알아서 뺀다.
+local function CanSellAll()
+	local merchant = C_MerchantFrame
+	if not (merchant and type(merchant.SellAllJunkItems) == "function") then return false end
+	return type(merchant.IsSellAllJunkEnabled) ~= "function" or ns.Clean(merchant.IsSellAllJunkEnabled()) == true
+end
+
+-- 요청 전 목록과 비교해 실제로 가방에서 빠진 것만 판 것으로 센다
+local function ReportSold(list)
+	soldCount, soldValue = 0, 0
+	for _, item in ipairs(list) do
+		local info = C_Container.GetContainerItemInfo(item.bag, item.slot)
+		if not (info and info.itemID == item.itemID) then
+			soldCount, soldValue = soldCount + 1, soldValue + item.value
+		end
+	end
+	FinishSelling()
+end
+
 local function SellJunk()
 	if selling then return end
 	CollectJunk()
 	if #queue == 0 then return end
 	selling = true
 	soldCount, soldValue = 0, 0
+	if CanSellAll() then
+		local list = queue
+		queue = {}
+		C_MerchantFrame.SellAllJunkItems()
+		C_Timer.After(REPORT_WAIT, function() ReportSold(list) end)
+		return
+	end
 	SellNext()
 end
 
@@ -153,4 +193,7 @@ function M:BuildOptions(b)
 		indent = 40,
 	}
 	b:Check{ key = "report", label = "판매·수리 금액을 채팅창에 표시", depends = "enabled", indent = 20 }
+	b:Text("- 판매 잠금: 가방 창 왼쪽 위 아이콘을 누르고(합친 가방이면 가방 이름을 고른 뒤) '이 가방 무시'의 [잡동사니 판매]에 체크하면, "
+		.. "그 가방의 회색 아이템은 팔지 않습니다. 같은 자리를 다시 눌러 체크를 풀면 다시 팝니다.",
+		{ color = { 0.7, 0.7, 0.7 } })
 end

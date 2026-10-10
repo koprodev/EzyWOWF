@@ -128,21 +128,11 @@ local function UpdateBagFrame(frame)
 	end
 end
 
-local function BagFrames()
-	local frames = {}
-	for i = 1, NUM_CONTAINER_FRAMES or 13 do
-		local frame = _G["ContainerFrame" .. i]
-		if frame then frames[#frames + 1] = frame end
-	end
-	if ContainerFrameCombinedBags then frames[#frames + 1] = ContainerFrameCombinedBags end
-	return frames
-end
-
 local bagsHooked = false
 local function HookBags()
 	if bagsHooked then return end
 	bagsHooked = true
-	for _, frame in ipairs(BagFrames()) do
+	for _, frame in ipairs(ns.BagFrames()) do
 		if frame.UpdateItems then hooksecurefunc(frame, "UpdateItems", UpdateBagFrame) end
 	end
 end
@@ -156,7 +146,7 @@ end
 
 function M:ApplySettings()
 	RefreshCharacter()
-	for _, frame in ipairs(BagFrames()) do
+	for _, frame in ipairs(ns.BagFrames()) do
 		if frame:IsShown() then UpdateBagFrame(frame) end
 	end
 	if not (self.db.enabled and self.db.inspect) then

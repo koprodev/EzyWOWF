@@ -40,7 +40,7 @@ local FALLBACK_NAMES = {
 	[1082] = "할퀴기", [1126] = "야생의 징표", [2637] = "겨울잠", [5176] = "천벌", [5185] = "치유의 손길", [5215] = "숨기",
 	[5487] = "곰 변신", [6795] = "포효", [6807] = "후려치기", [9634] = "광포한 곰 변신",
 	[8946] = "해독", [2893] = "독 해제", [2782] = "저주 해제", [29166] = "정신 자극", [20484] = "환생",
-	[22812] = "나무 껍질", [1850] = "질주",
+	[22812] = "나무 껍질", [1850] = "질주", [8921] = "달빛 섬광", [1238122] = "야성의 돌진",
 	-- 마법사
 	[118] = "변이", [168] = "냉기 갑옷", [587] = "음식 창조", [1459] = "신비한 지능", [1463] = "마나 보호막",
 	[2139] = "마법 차단", [5504] = "음료 창조", [6117] = "마법사 갑옷", [7302] = "얼음 갑옷",
@@ -358,6 +358,24 @@ MACROS.DRUID = {
 			if #melee > 0 then lines[#lines + 1] = ("/startattack [nomod:shift,form:%s]"):format(table.concat(melee, "/")) end
 			lines[#lines + 1] = "/cast " .. table.concat(parts, "; ")
 			return table.concat(lines, "\n")
+		end,
+	},
+	{
+		key = "charge", name = "돌진 섬광", title = "야성의 돌진·달빛 섬광 (곰·표범 돌진, 인간형 섬광)",
+		spells = { 1238122, 8921 },
+		desc = {
+			"곰·표범: 야성의 돌진 · 인간형·달빛야수: 달빛 섬광",
+			"이동·바다표범에선 쉬어요. 변신을 새로 배우면 다시 만드세요",
+		},
+		body = function()
+			-- 야성의 돌진은 곰·표범 공용 한 주문이라 이름 하나로 둘 다 된다(변신마다 게임이 알아서 바꿔 침)
+			local bear, cat, moonkin = BearIndex(), FormIndex(768), FormIndex(24858)
+			local feral, parts = {}, {}
+			if bear then feral[#feral + 1] = bear end
+			if cat then feral[#feral + 1] = cat end
+			if #feral > 0 then parts[1] = ("[form:%s] %s"):format(table.concat(feral, "/"), N(1238122)) end
+			parts[#parts + 1] = "[noform]" .. (moonkin and ("[form:%d]"):format(moonkin) or "") .. " " .. N(8921)
+			return Lines("#showtooltip", "/cast " .. table.concat(parts, "; "))
 		end,
 	},
 	{

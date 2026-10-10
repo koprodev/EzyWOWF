@@ -82,8 +82,8 @@ local function BuildFilters(frame)
 	local items = {}
 	for _, kind in ipairs(Finder.GetKinds()) do
 		items[#items + 1] = {
-			key = "kind_" .. kind[1], text = kind[2],
-			title = kind[2] .. " 전문가", tooltip = "체크한 전문가를 세계 지도와 미니맵에 표시합니다.",
+			key = "kind_" .. kind[1], text = kind[2], title = Finder.KindTitle(kind[1]),
+			tooltip = ("체크한 %s 세계 지도와 미니맵에 표시합니다."):format(kind.vendor and "상인을" or "전문가를"),
 		}
 	end
 	frame.grid = b:CheckGrid{ items = items, columns = 3 }
